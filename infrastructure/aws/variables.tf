@@ -8,9 +8,8 @@ variable "vpc_cidr"{
     default = "10.0.0.0/16"
 }
 
-variable "aws_azs"{
-    type = list(string)
-    default = ["us-west-1a", "us-west-1b"]
+data "aws_availability_zones" "available" {
+    state = "available"
 }
 
 variable "public_subnet_cidrs"{
