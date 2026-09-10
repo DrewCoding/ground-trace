@@ -26,3 +26,23 @@ variable "project_name" {
     type = string
     default = "ground-trace"
 }
+
+variable "game_server_port"{
+    type = number
+    default = 7777
+}
+
+variable "game_server_cpu"{
+    type = number
+    default = 512
+}
+
+variable "game_server_memory"{
+    type = number
+    default = 1024
+}
+
+variable "game_server_image_tag"{
+    type = string
+    default = "latest"
+}
