@@ -2,6 +2,11 @@ resource "aws_ecs_cluster" "main" {
     name = "${var.project_name}-cluster"
 }
 
+resource "aws_cloudwatch_log_group" "game_server" {
+    name = "/ecs/${var.project_name}-game-server"
+    retention_in_days = 7
+}
+
 resource "aws_security_group" "game_server" {
     name = "${var.project_name}-game-server"
     vpc_id = module.vpc.vpc_id
@@ -51,8 +56,17 @@ resource "aws_ecs_task_definition" "game_server" {
         ]
 
         environment = [
-            { name = "GAME_PORT", value = tostring(var.game_server_port) }
+            { name = "GAME_PORT", value = tostring(var.game_server_port) },
         ]
+
+        logConfiguration = {
+                logDriver = "awslogs"
+                options = {
+                    "awslogs-group" = aws_cloudwatch_log_group.game_server.name
+                    "awslogs-region" = var.aws_region
+                    "awslogs-stream-prefix" = "ecs"    
+                }
+        }
     }
     ])
 }

@@ -27,7 +27,7 @@ resource "aws_dynamodb_table" "sessions" {
 
     ttl {
         attribute_name = "expiresAt"
-        enabled        = true
+        enabled = true
     }
 
     point_in_time_recovery {
