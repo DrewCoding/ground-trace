@@ -111,15 +111,23 @@ def release_tickets(ticket_ids):
 
 def poll_ticket(ticket_id):
     ticket = queue.get_item(Key = {"ticketId": ticket_id}).get("Item")
+    if not ticket:
+        return {"status": "expired"}
 
     if ticket["status"] == "waiting":
         return {"status": "waiting"}
 
     session_id = ticket.get("sessionId")
+    if not session_id:
+        return {"status": "provisioning"}
 
     session = sessions.get_item(Key = {"sessionId": session_id}).get("Item")
+    if not session:
+        return {"status": "expired"}
 
     ip = session.get("publicIp")
+    if not ip:
+        pass
 
     return {
         "status": "matched",
