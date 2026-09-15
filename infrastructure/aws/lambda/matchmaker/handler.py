@@ -58,6 +58,9 @@ def try_form_match():
     for ticket in waiting:
         if claim_ticket(ticket["ticketId"]):
             claimed.append(ticket["ticketId"])
+        else:
+            release_tickets(claimed)
+            return
 
 def claim_ticket(ticket_id):
     try:
@@ -73,6 +76,15 @@ def claim_ticket(ticket_id):
         if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
             return False
         raise
+
+def release_tickets(ticket_ids):
+    for ticket_id in ticket_ids:
+        queue.update_item (
+            Key = {"ticketId": ticket_id},
+            UpdateExpression = "SET #s = :waiting",
+            ExpressionAttributeNames = {"#s": "status"},
+            ExpressionAttributeValues = {":waiting": "waiting"},
+        )
 
 def respond(code, body):
     return {
