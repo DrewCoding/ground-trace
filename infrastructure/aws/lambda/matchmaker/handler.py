@@ -43,6 +43,9 @@ def lambda_handler(event, context):
             body = json.loads(event.get("body") or "{}")
             return respond(200, heartbeat(params["sessionId"], body))
 
+        if method == "DELETE" and path.startswith("/sessions/"):
+            return respond(200, deregister(params["sessionId"]))
+
         return respond(404, {"error": "no such route"})
 
     except:
