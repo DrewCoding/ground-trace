@@ -69,8 +69,18 @@ def try_form_match():
             release_tickets(claimed)
             return
 
-    # try:
-    #     session_id = 
+    try:
+        session_id = provision_session()
+    except Exception:
+        release_tickets(claimed)
+        raise
+
+    for ticket_id in claimed:
+        queue.update_item (
+            Key = {"ticketId": ticket_id},
+            UpdateExpression = "SET sessionId = :s",
+            ExpressionAttributeValues = {":s": session_id},
+        )
 
 def claim_ticket(ticket_id):
     try:
