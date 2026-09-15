@@ -39,6 +39,8 @@ def lambda_handler(event, context):
         if method == "DELETE" and path.endswith("/heartbeat"):
             return respond(200, leave_queue(params["ticketId"]))
 
+        respond(404, {"error": "no such route"})
+        
     except:
         return respond(400, None)
 
