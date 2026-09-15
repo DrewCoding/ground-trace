@@ -22,6 +22,7 @@ dynamodb = boto3.resource("dynamodb")
 sessions = dynamodb.Table(SESSIONS_TABLE)
 queue = dynamodb.Table(QUEUE_TABLE)
 ecs = boto3.client("ecs")
+ec2 = boto3.client("ec2")
 
 def lambda_handler(event, context):
     method = event["requestContext"]["http"]["method"]
@@ -175,6 +176,30 @@ def provision_session():
     })
 
     return session_id
+
+def resolve_public_ip(session):
+    task = ecs.describe_tasks(
+        cluster = ECS_CLUSTER,
+        tasks = [session["taskArn"]],
+    ).get("tasks", [])
+
+    if not task or task[0]["lastStatus"] != "RUNNING":
+        return None
+
+    eni_id = None
+    for attachment in task[0].get("attachments", []):
+        for detail in attachment.get("details", []):
+            if detail["name"] == "networkInterfaceId":
+                eni_id = detail["value"]
+
+    if not eni_id:
+        return None
+
+    enis = ec2.describe_network_interface(NetworkInterfaceIds = [eni_id])
+    associate = enis["NetworkInterfaces"][0].get("Association") or {}
+    ip = associate.get("PublicIp")
+
+    return ip
 
 def respond(code, body):
     return {
