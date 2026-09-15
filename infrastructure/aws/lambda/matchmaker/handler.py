@@ -129,7 +129,7 @@ def poll_ticket(ticket_id):
     ip = session.get("publicIp")
 
     if not ip:
-        return resolve_public_ip(session)
+        ip = resolve_public_ip(session)
     
     if not ip:
         return {"status": "provisioning"}
