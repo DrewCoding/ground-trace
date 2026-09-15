@@ -1,0 +1,41 @@
+import os
+import uuid
+import time
+
+import boto3
+from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
+
+QUEUE_TABLE = os.environ["QUEUE_TABLE"]
+
+dynamodb = boto3.resource("dynamodb")
+queue = dynamodb.Table(QUEUE_TABLE)
+
+
+def lambda_handler(event, context):
+    method = event["requestContext"]["http"]["method"]
+    path = event["requestContext"]["http"]["path"]
+    params = event.get("pathParameters") or {}
+
+    try:
+        if method == "POST" and path == "/queue":
+            return respond(200, join_queue())
+
+    except:
+        return respond(400, None)
+
+def join_queue():
+    ticket_id = str(uuid.uuid4())
+    now = int(time.time())
+
+    queue.put_item(Item={
+        "ticketId": ticket_id,
+        "status": "waiting",
+        "queuedAt": now,
+        "expiresAt": now + 300,
+    })
+
+    return {"ticket_id": ticket_id, "status": "waiting"}
+
+def respond(code, body):
+    pass
