@@ -244,6 +244,10 @@ def heartbeat(session_id, body):
 
     return {"status": "ok"}
 
+def deregister(session_id):
+    sessions.delete_item(Key = {"sessionId": session_id})
+    return {"status": "deregistered"}
+
 def respond(code, body):
     return {
         "statusCode": code,
