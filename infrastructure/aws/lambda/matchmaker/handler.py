@@ -8,6 +8,7 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
+SESSIONS_TABLE = os.environ["SESSIONS_TABLE"]
 QUEUE_TABLE = os.environ["QUEUE_TABLE"]
 ECS_CLUSTER = os.environ["ECS_CLUSTER"]
 TASK_DEFINITION = os.environ["TASK_DEFINITION"]
@@ -18,6 +19,7 @@ TICKET_TTL_SECONDS = 300
 PLAYERS_PER_MATCH = 2
 
 dynamodb = boto3.resource("dynamodb")
+sessions = dynamodb.Table(SESSIONS_TABLE)
 queue = dynamodb.Table(QUEUE_TABLE)
 ecs = boto3.client("ecs")
 
@@ -96,7 +98,6 @@ def release_tickets(ticket_ids):
 
 def provision_session():
     session_id = str(uuid.uuid4())
-    now = int(time.time())
 
     task = ecs.run_task(
         cluster = ECS_CLUSTER,
@@ -117,6 +118,23 @@ def provision_session():
             }]
         },
     )
+
+    now = int(time.time())
+    task_arn = task["tasks"][0]["taskArn"]
+
+    sessions.put_items( Item = {
+        "sessionId": session_id,
+        "status": "provisioning",
+        "createdAt": now,
+        "lastHeartbeat": now,
+        "expiredAt": now + 45 * 4,
+        "playerCount": 0,
+        "maxPlayers": PLAYERS_PER_MATCH,
+        "port": 7777,
+        "taskArn": task_arn,
+    })
+
+    return session_id
 
 def respond(code, body):
     return {
