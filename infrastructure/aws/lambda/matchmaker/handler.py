@@ -9,12 +9,17 @@ from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 QUEUE_TABLE = os.environ["QUEUE_TABLE"]
+ECS_CLUSTER = os.environ["ECS_CLUSTER"]
+TASK_DEFINITION = os.environ["TASK_DEFINITION"]
+SUBNET_IDS = os.environ["SUBNET_IDS"].split(",")
+SECURITY_GROUP_ID = os.environ["SECURITY_GROUP_ID"]
+CONTAINER_NAME = os.environ.get("CONTAINER_NAME", "game-server")
+TICKET_TTL_SECONDS = 300
+PLAYERS_PER_MATCH = 2
 
 dynamodb = boto3.resource("dynamodb")
 queue = dynamodb.Table(QUEUE_TABLE)
-
-TICKET_TTL_SECONDS = 300
-PLAYERS_PER_MATCH = 2
+ecs = boto3.client("ecs")
 
 def lambda_handler(event, context):
     method = event["requestContext"]["http"]["method"]
@@ -62,6 +67,9 @@ def try_form_match():
             release_tickets(claimed)
             return
 
+    # try:
+    #     session_id = 
+
 def claim_ticket(ticket_id):
     try:
         queue.update_item(
@@ -85,6 +93,30 @@ def release_tickets(ticket_ids):
             ExpressionAttributeNames = {"#s": "status"},
             ExpressionAttributeValues = {":waiting": "waiting"},
         )
+
+def provision_session():
+    session_id = str(uuid.uuid4())
+    now = int(time.time())
+
+    task = ecs.run_task(
+        cluster = ECS_CLUSTER,
+        taskDefinition = TASK_DEFINITION,
+        launchType = "FARGATE",
+        count = 1,
+        networkConfiguration = {
+            "awsvpcConfiguration": {
+                "subnets": SUBNET_IDS,
+                "securityGroups": [SECURITY_GROUP_ID],
+                "assignPublicIp": "ENABLED",
+            }
+        },
+        overrides = {
+            "containerOverrides": [{
+                "name": CONTAINER_NAME,
+                "environment": [{"name": "SESSION_ID", "value": session_id}],
+            }]
+        },
+    )
 
 def respond(code, body):
     return {
