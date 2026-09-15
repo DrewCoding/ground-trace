@@ -32,6 +32,9 @@ def lambda_handler(event, context):
         if method == "POST" and path == "/queue":
             return respond(200, join_queue())
 
+        if method == "GET" and path.startwith("/queue/"):
+            return respond(200, poll_ticket(params["ticketId"]))
+
     except:
         return respond(400, None)
 
@@ -105,6 +108,25 @@ def release_tickets(ticket_ids):
             ExpressionAttributeNames = {"#s": "status"},
             ExpressionAttributeValues = {":waiting": "waiting"},
         )
+
+def poll_ticket(ticket_id):
+    ticket = queue.get_item(Key = {"ticketId": ticket_id}).get("Item")
+
+    if ticket["status"] == "waiting":
+        return {"status": "waiting"}
+
+    session_id = ticket.get("sessionId")
+
+    session = sessions.get_item(Key = {"sessionId": session_id}).get("Item")
+
+    ip = session.get("publicIp")
+
+    return {
+        "status": "matched",
+        "sessionId": session_id,
+        "ip": ip,
+        "port": 7777
+    }
 
 def provision_session():
     session_id = str(uuid.uuid4())
