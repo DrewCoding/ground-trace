@@ -127,7 +127,7 @@ def poll_ticket(ticket_id):
 
     ip = session.get("publicIp")
     if not ip:
-        pass
+        return {"status": "provisioning"}
 
     return {
         "status": "matched",
