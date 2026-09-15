@@ -1,6 +1,7 @@
 import os
 import uuid
 import time
+import json
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -38,4 +39,8 @@ def join_queue():
     return {"ticket_id": ticket_id, "status": "waiting"}
 
 def respond(code, body):
-    pass
+    return {
+        "statusCode": code,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(body)
+    }
