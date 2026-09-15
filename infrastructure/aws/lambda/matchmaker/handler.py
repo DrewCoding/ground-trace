@@ -199,6 +199,13 @@ def resolve_public_ip(session):
     associate = enis["NetworkInterfaces"][0].get("Association") or {}
     ip = associate.get("PublicIp")
 
+    if ip:
+        sessions.update_item(
+            Key = {"sessionsId": session["sessionId"]},
+            UpdateExpression = "SET publicIp = :ip",
+            ExpressionAttributeValues = {":ip": ip},
+        )
+
     return ip
 
 def respond(code, body):
