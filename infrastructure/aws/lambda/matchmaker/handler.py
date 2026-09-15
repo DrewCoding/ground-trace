@@ -39,8 +39,12 @@ def lambda_handler(event, context):
         if method == "DELETE" and path.endswith("/heartbeat"):
             return respond(200, leave_queue(params["ticketId"]))
 
-        respond(404, {"error": "no such route"})
-        
+        if method == "POST" and path.endswith("/heartbeat"):
+            body = json.loads(event.get("body") or "{}")
+            return respond(200, heartbeat(params["sessionId"], body))
+
+        return respond(404, {"error": "no such route"})
+
     except:
         return respond(400, None)
 
@@ -220,6 +224,25 @@ def resolve_public_ip(session):
         )
 
     return ip
+
+def heartbeat(session_id, body):
+    now = int(time.time())
+
+    sessions.update_item(
+        Key = {"sessionId": session_id},
+        UpdateExpression = (
+            "SET #s = :status, playerCount = :count, "
+            "lastHeartbeat = :now, expiredAt = :expires"
+        ),
+        ExpressionAttributeNames = {
+            ":status": body.get("status", "waiting"),
+            ":count": int(body.get("playerCount", 0)),
+            ":now": now,
+            ":expires": now + 45 * 4,
+        }
+    )
+
+    return {"status": "ok"}
 
 def respond(code, body):
     return {
