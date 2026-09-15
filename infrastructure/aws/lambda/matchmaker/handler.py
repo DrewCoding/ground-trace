@@ -36,6 +36,9 @@ def lambda_handler(event, context):
         if method == "GET" and path.startwith("/queue/"):
             return respond(200, poll_ticket(params["ticketId"]))
 
+        if method == "DELETE" and path.endswith("/heartbeat"):
+            return respond(200, leave_queue(params["ticketId"]))
+
     except:
         return respond(400, None)
 
@@ -140,6 +143,10 @@ def poll_ticket(ticket_id):
         "ip": ip,
         "port": 7777
     }
+
+def leave_queue(ticket_id):
+    queue.delete_item(Key = {"ticketId": ticket_id})
+    return {"status": "cancelled"}
 
 def provision_session():
     session_id = str(uuid.uuid4())
