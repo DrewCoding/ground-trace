@@ -64,7 +64,7 @@ def join_queue():
 
     try_form_match()
 
-    return {"ticket_id": ticket_id, "status": "waiting"}
+    return {"ticketId": ticket_id, "status": "waiting"}
 
 def try_form_match():
     cutoff = int(time.time()) - TICKET_TTL_SECONDS
@@ -190,7 +190,7 @@ def provision_session():
         "status": "provisioning",
         "createdAt": now,
         "lastHeartbeat": now,
-        "expiredAt": now + 45 * 4,
+        "expiresAt": now + 45 * 4,
         "playerCount": 0,
         "maxPlayers": PLAYERS_PER_MATCH,
         "port": 7777,
@@ -223,7 +223,7 @@ def resolve_public_ip(session):
 
     if ip:
         sessions.update_item(
-            Key = {"sessionsId": session["sessionId"]},
+            Key = {"sessionId": session["sessionId"]},
             UpdateExpression = "SET publicIp = :ip",
             ExpressionAttributeValues = {":ip": ip},
         )
@@ -237,7 +237,7 @@ def heartbeat(session_id, body):
         Key = {"sessionId": session_id},
         UpdateExpression = (
             "SET #s = :status, playerCount = :count, "
-            "lastHeartbeat = :now, expiredAt = :expires"
+            "lastHeartbeat = :now, expiresAt = :expires"
         ),
         ExpressionAttributeNames = {
             "#s" : "status"
