@@ -48,8 +48,8 @@ def lambda_handler(event, context):
 
         return respond(404, {"error": "no such route"})
 
-    except:
-        return respond(400, None)
+    except KeyError as exc:
+        return respond(400, {"error": f"missing {exc}"})
 
 def join_queue():
     ticket_id = str(uuid.uuid4())
