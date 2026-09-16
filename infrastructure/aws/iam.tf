@@ -62,6 +62,8 @@ data "aws_iam_policy_document" "matchmaker" {
     resources = [
             aws_dynamodb_table.sessions.arn,
             "${aws_dynamodb_table.sessions.arn}/index/*",
+            aws_dynamodb_table.queue.arn,
+            "${aws_dynamodb_table.queue.arn}/index/*",
         ]
     }
 
