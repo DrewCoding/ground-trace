@@ -105,7 +105,7 @@ def claim_ticket(ticket_id):
         queue.update_item(
             Key = {"ticketId": ticket_id},
             UpdateExpression = "SET #s = :matched",
-            ConditionExpression = "#s = waiting",
+            ConditionExpression = "#s = :waiting",
             ExpressionAttributeNames = {"#s": "status"},
             ExpressionAttributeValues = {":matched": "matched", ":waiting": "waiting"},
         )
