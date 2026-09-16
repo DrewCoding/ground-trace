@@ -33,10 +33,10 @@ def lambda_handler(event, context):
         if method == "POST" and path == "/queue":
             return respond(200, join_queue())
 
-        if method == "GET" and path.startwith("/queue/"):
+        if method == "GET" and path.startswith("/queue/"):
             return respond(200, poll_ticket(params["ticketId"]))
 
-        if method == "DELETE" and path.endswith("/heartbeat"):
+        if method == "DELETE" and path.startswith("/queue/"):
             return respond(200, leave_queue(params["ticketId"]))
 
         if method == "POST" and path.endswith("/heartbeat"):
@@ -61,6 +61,8 @@ def join_queue():
         "queuedAt": now,
         "expiresAt": now + TICKET_TTL_SECONDS,
     })
+
+    try_form_match()
 
     return {"ticket_id": ticket_id, "status": "waiting"}
 
@@ -183,7 +185,7 @@ def provision_session():
     now = int(time.time())
     task_arn = task["tasks"][0]["taskArn"]
 
-    sessions.put_items( Item = {
+    sessions.put_item( Item = {
         "sessionId": session_id,
         "status": "provisioning",
         "createdAt": now,
@@ -215,7 +217,7 @@ def resolve_public_ip(session):
     if not eni_id:
         return None
 
-    enis = ec2.describe_network_interface(NetworkInterfaceIds = [eni_id])
+    enis = ec2.describe_network_interfaces(NetworkInterfaceIds = [eni_id])
     associate = enis["NetworkInterfaces"][0].get("Association") or {}
     ip = associate.get("PublicIp")
 
@@ -238,6 +240,9 @@ def heartbeat(session_id, body):
             "lastHeartbeat = :now, expiredAt = :expires"
         ),
         ExpressionAttributeNames = {
+            "#s" : "status"
+        }
+        ExpressionAttributeValues = {
             ":status": body.get("status", "waiting"),
             ":count": int(body.get("playerCount", 0)),
             ":now": now,
