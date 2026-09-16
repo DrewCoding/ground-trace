@@ -241,7 +241,7 @@ def heartbeat(session_id, body):
         ),
         ExpressionAttributeNames = {
             "#s" : "status"
-        }
+        },
         ExpressionAttributeValues = {
             ":status": body.get("status", "waiting"),
             ":count": int(body.get("playerCount", 0)),
