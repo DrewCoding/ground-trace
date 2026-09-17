@@ -3,6 +3,8 @@ import uuid
 import time
 import json
 import hmac
+import logging
+import traceback
 from decimal import Decimal
 
 import boto3
@@ -26,11 +28,17 @@ PLAYERS_PER_MATCH = 2
 # many Fargate tasks at once.
 MAX_CONCURRENT_SESSIONS = int(os.environ.get("MAX_CONCURRENT_SESSIONS", "4"))
 
+log = logging.getLogger()
+log.setLevel(logging.INFO)
+
 dynamodb = boto3.resource("dynamodb")
 sessions = dynamodb.Table(SESSIONS_TABLE)
 queue = dynamodb.Table(QUEUE_TABLE)
 ecs = boto3.client("ecs")
 ec2 = boto3.client("ec2")
+
+class MatchmakerError(Exception):
+    """Something went wrong that the caller should hear a real reason for."""
 
 def lambda_handler(event, context):
     # HTTP API v2 lowercases header names, so this must be "x-api-key" -
@@ -65,6 +73,25 @@ def lambda_handler(event, context):
 
     except KeyError as exc:
         return respond(400, {"error": f"missing {exc}"})
+
+    except MatchmakerError as exc:
+        log.error("matchmaker: %s", exc)
+        return respond(503, {"error": str(exc)})
+
+    except ClientError as exc:
+        # AWS refused something - almost always a missing IAM action or a
+        # throttle. Surfacing the AWS error code in the response turns a
+        # CloudWatch dig into a readable answer.
+        code = exc.response["Error"]["Code"]
+        log.error("aws %s on %s: %s", code, method, exc)
+        return respond(502, {"error": "aws call failed", "code": code})
+
+    except Exception as exc:
+        # Anything unforeseen. Logged with a traceback so the cause is in
+        # CloudWatch, but the client only gets a generic message - internal
+        # details shouldn't leak out of a public endpoint.
+        log.error("unhandled on %s %s: %s\n%s", method, path, exc, traceback.format_exc())
+        return respond(500, {"error": "internal error"})
 
 def join_queue():
     ticket_id = str(uuid.uuid4())
@@ -210,6 +237,16 @@ def provision_session():
             }]
         },
     )
+
+    # RunTask returns HTTP 200 even when it couldn't place the task: the
+    # reason goes into "failures" and "tasks" comes back empty. Indexing
+    # straight into tasks[0] would raise IndexError and throw away the only
+    # useful information. Common real causes are no free IPs left in the
+    # subnet, Fargate capacity shortfalls, and account task quotas.
+    failures = task.get("failures") or []
+    if failures or not task.get("tasks"):
+        reason = failures[0].get("reason", "unknown") if failures else "no task returned"
+        raise MatchmakerError(f"could not start game server: {reason}")
 
     now = int(time.time())
     task_arn = task["tasks"][0]["taskArn"]
