@@ -2,6 +2,7 @@ import os
 import uuid
 import time
 import json
+import hmac
 from decimal import Decimal
 
 import boto3
@@ -15,8 +16,15 @@ TASK_DEFINITION = os.environ["TASK_DEFINITION"]
 SUBNET_IDS = os.environ["SUBNET_IDS"].split(",")
 SECURITY_GROUP_ID = os.environ["SECURITY_GROUP_ID"]
 CONTAINER_NAME = os.environ.get("CONTAINER_NAME", "game-server")
+API_KEY = os.environ["API_KEY"]
 TICKET_TTL_SECONDS = 300
 PLAYERS_PER_MATCH = 2
+
+# A hard ceiling on how much this endpoint can ever cost. Unlike the shared
+# secret, this holds even against someone who extracted the key from a game
+# build - they can spam requests, but they cannot make us run more than this
+# many Fargate tasks at once.
+MAX_CONCURRENT_SESSIONS = int(os.environ.get("MAX_CONCURRENT_SESSIONS", "4"))
 
 dynamodb = boto3.resource("dynamodb")
 sessions = dynamodb.Table(SESSIONS_TABLE)
@@ -25,6 +33,13 @@ ecs = boto3.client("ecs")
 ec2 = boto3.client("ec2")
 
 def lambda_handler(event, context):
+    # HTTP API v2 lowercases header names, so this must be "x-api-key" -
+    # "X-Api-Key" would never match. compare_digest rather than != so the
+    # comparison doesn't leak the key a character at a time via timing.
+    headers = event.get("headers") or {}
+    if not hmac.compare_digest(headers.get("x-api-key", ""), API_KEY):
+        return respond(403, {"error": "forbidden"})
+
     method = event["requestContext"]["http"]["method"]
     path = event["requestContext"]["http"]["path"]
     params = event.get("pathParameters") or {}
@@ -79,6 +94,11 @@ def try_form_match():
     if len(waiting) < PLAYERS_PER_MATCH:
         return
 
+    if active_session_count() >= MAX_CONCURRENT_SESSIONS:
+        # Leave everyone queued rather than provisioning past the cap. They
+        # keep polling and get matched once something frees up.
+        return
+
     claimed = []
     for ticket in waiting:
         if claim_ticket(ticket["ticketId"]):
@@ -99,6 +119,15 @@ def try_form_match():
             UpdateExpression = "SET sessionId = :s",
             ExpressionAttributeValues = {":s": session_id},
         )
+
+def active_session_count():
+    """How many sessions exist right now, in any state.
+
+    A Scan reads the whole table, which is fine at this size and would need
+    revisiting at volume - a counter item or a per-status query would scale,
+    this won't.
+    """
+    return sessions.scan(Select="COUNT").get("Count", 0)
 
 def claim_ticket(ticket_id):
     try:
