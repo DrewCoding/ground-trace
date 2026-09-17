@@ -50,7 +50,7 @@ resource "aws_iam_role_policy_attachment" "matchmaker_logs" {
 data "aws_iam_policy_document" "matchmaker" {
 
     statement {
-        sid    = "SessionTable"
+        sid    = "MatchmakerTables"
         effect = "Allow"
         actions = [
             "dynamodb:GetItem",
