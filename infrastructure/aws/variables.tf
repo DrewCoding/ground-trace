@@ -47,7 +47,12 @@ variable "game_server_image_tag"{
     default = "latest"
 }
 
+variable "matchmaker_api_key"{
+    type = string
+    sensitive = true
+}
+
 variable "max_concurrent_sessions" {
     type = number
-    default = 2
+    default = 4
 }

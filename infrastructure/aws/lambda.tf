@@ -26,6 +26,8 @@ resource "aws_lambda_function" "matchmaker" {
           SUBNET_IDS = join(",", module.vpc.public_subnets)
           SECURITY_GROUP_ID = aws_security_group.game_server.id
           CONTAINER_NAME = "game-server"
+          API_KEY = var.matchmaker_api_key
+          MAX_CONCURRENT_SESSIONS = tostring(var.max_concurrent_sessions)
         }
     }
 }
