@@ -46,3 +46,8 @@ variable "game_server_image_tag"{
     type = string
     default = "latest"
 }
+
+variable "max_concurrent_sessions" {
+    type = number
+    default = 2
+}
