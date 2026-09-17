@@ -22,3 +22,8 @@ output "game_server_security_group_id" {
 output "public_subnet_ids" {
   value = module.vpc.public_subnets
 }
+
+output "matchmaker_api_url"{
+  value = aws_apigatewayv2_stage.default.invoke_url
+  description = "URL that the unity client points to"
+}
