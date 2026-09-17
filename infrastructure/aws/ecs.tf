@@ -57,11 +57,11 @@ resource "aws_ecs_task_definition" "game_server" {
             containerPort = var.game_server_port
             hostPort = var.game_server_port
             protocol = "udp"
-        }
-        ]
+        }]
 
         environment = [
             { name = "GAME_PORT", value = tostring(var.game_server_port) },
+            { name = "EMPTY_SHUTDOWN_SECONDS", value = "60" },
         ]
 
         logConfiguration = {
