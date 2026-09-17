@@ -53,6 +53,7 @@ data "aws_iam_policy_document" "matchmaker" {
         sid    = "MatchmakerTables"
         effect = "Allow"
         actions = [
+            "dynamodb:Scan",
             "dynamodb:GetItem",
             "dynamodb:PutItem",
             "dynamodb:UpdateItem",
