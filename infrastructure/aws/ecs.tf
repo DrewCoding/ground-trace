@@ -62,6 +62,8 @@ resource "aws_ecs_task_definition" "game_server" {
         environment = [
             { name = "GAME_PORT", value = tostring(var.game_server_port) },
             { name = "EMPTY_SHUTDOWN_SECONDS", value = "60" },
+            { name = "MATCHMAKER_URL", value = aws_apigatewayv2_stage.default.invoke_url },
+            { name = "MATCHMAKER_KEY", value = var.matchmaker_api_key },
         ]
 
         logConfiguration = {
