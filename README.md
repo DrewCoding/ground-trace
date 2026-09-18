@@ -229,3 +229,9 @@ bash scripts/run-server.sh
 
 It resolves networking by tag, launches one task, waits for `RUNNING`, and
 prints the address. The manual version of what the matchmaker automates.
+
+## Up Next
+
+- Frontend live monitoring tickets and containers
+- CI/CD Pipeline for changes made to the client software
+- S3 and DynamoDB state locking for tfstate
