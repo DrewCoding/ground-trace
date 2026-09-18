@@ -4,6 +4,11 @@ data "archive_file" "matchmaker" {
     output_path = "${path.module}/build/matchmaker.zip"
 }
 
+resource "aws_cloudwatch_log_group" "matchmaker" {
+    name = "/aws/lambda/${var.project_name}-matchmaker"
+    retention_in_days = 7
+}
+
 resource "aws_lambda_function" "matchmaker" {
     function_name = "${var.project_name}-matchmaker"
     role = aws_iam_role.matchmaker.arn
