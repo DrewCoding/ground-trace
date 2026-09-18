@@ -198,3 +198,34 @@ metrics and bills for them. It's on to gather right-sizing numbers; leaving it
 off is the cheaper steady state once the task is sized.
 
 ---
+
+## Running it
+
+Requires Terraform, the AWS CLI, and Docker.
+
+```bash
+cd infrastructure/aws
+terraform init
+terraform apply          # needs matchmaker_api_key in terraform.tfvars
+```
+
+Then build the Unity Linux dedicated server, and from the game repo:
+
+```bash
+aws ecr get-login-password --region us-west-1 \
+  | docker login --username AWS --password-stdin <account>.dkr.ecr.us-west-1.amazonaws.com
+docker build -f Dockerfile.server -t game-server .
+docker tag game-server:latest <account>.dkr.ecr.us-west-1.amazonaws.com/ground-trace-game-server:latest
+docker push <account>.dkr.ecr.us-west-1.amazonaws.com/ground-trace-game-server:latest
+```
+
+`terraform output matchmaker_api_url` gives the endpoint the game client needs.
+
+To launch a server by hand without going through matchmaking:
+
+```bash
+bash scripts/run-server.sh
+```
+
+It resolves networking by tag, launches one task, waits for `RUNNING`, and
+prints the address. The manual version of what the matchmaker automates.
