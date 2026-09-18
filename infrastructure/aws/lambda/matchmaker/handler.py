@@ -22,6 +22,12 @@ API_KEY = os.environ["API_KEY"]
 TICKET_TTL_SECONDS = 300
 PLAYERS_PER_MATCH = 2
 
+# How long a session can go without reporting before we stop offering it.
+# TTL on the table is only garbage collection and AWS makes no promptness
+# guarantee, so liveness is decided here by age instead. Comfortably longer
+# than SessionHeartbeat's 10s interval.
+SESSION_STALE_SECONDS = 45
+
 # A hard ceiling on how much this endpoint can ever cost. Unlike the shared
 # secret, this holds even against someone who extracted the key from a game
 # build - they can spam requests, but they cannot make us run more than this
@@ -118,6 +124,21 @@ def try_form_match():
         ScanIndexForward = True,
     ).get("Items", [])
 
+    if not waiting:
+        return
+
+    # Backfill before provisioning. A server that's already up with a free
+    # slot needs only enough players to fill it - not a whole match - so a
+    # lone queued player can join a 1v1 whose opponent left, instead of
+    # waiting for a partner and paying for a second container.
+    session = find_joinable_session()
+    if session:
+        free_slots = int(session.get("maxPlayers", PLAYERS_PER_MATCH)) - int(session.get("playerCount", 0))
+        assign_tickets(waiting[:free_slots], session["sessionId"])
+        return
+
+    # Nothing to join, so a new server has to be worth it: only provision
+    # once there are enough players for a full match.
     if len(waiting) < PLAYERS_PER_MATCH:
         return
 
@@ -140,7 +161,46 @@ def try_form_match():
         release_tickets(claimed)
         raise
 
-    for ticket_id in claimed:
+    stamp_session(claimed, session_id)
+
+def find_joinable_session():
+    """An existing server that's up, reachable, and has room.
+
+    The staleness check is the important part: a server that died without
+    deregistering leaves its row behind until TTL gets around to it, and
+    sending players to a dead address is worse than making them wait.
+    """
+    cutoff = int(time.time()) - SESSION_STALE_SECONDS
+
+    candidates = sessions.query(
+        IndexName = "status-createdAt-index",
+        KeyConditionExpression = Key("status").eq("waiting"),
+        ScanIndexForward = True,
+    ).get("Items", [])
+
+    for session in candidates:
+        if int(session.get("lastHeartbeat", 0)) < cutoff:
+            continue
+
+        if not session.get("publicIp"):
+            # Still booting - no address to hand out yet.
+            continue
+
+        if int(session.get("playerCount", 0)) < int(session.get("maxPlayers", PLAYERS_PER_MATCH)):
+            return session
+
+    return None
+
+def assign_tickets(tickets, session_id):
+    claimed = []
+    for ticket in tickets:
+        if claim_ticket(ticket["ticketId"]):
+            claimed.append(ticket["ticketId"])
+
+    stamp_session(claimed, session_id)
+
+def stamp_session(ticket_ids, session_id):
+    for ticket_id in ticket_ids:
         queue.update_item (
             Key = {"ticketId": ticket_id},
             UpdateExpression = "SET sessionId = :s",
