@@ -168,3 +168,33 @@ triggering a second container. Cheaper and faster than a cold start.
 
 Keeping the second role defined-but-empty means adding a permission later is a
 policy change, not a restructure.
+
+---
+
+## Cost
+
+|             |                                                                             |
+| ----------- | --------------------------------------------------------------------------- |
+| Idle        | **< $0.10/month** — ECR storage, a few DynamoDB rows, log retention         |
+| Per match   | **~$0.03/hour** — one Fargate task at 0.5 vCPU / 1 GB (`us-west-1`)         |
+| Matchmaking | Effectively free — Lambda and API Gateway are per-request at trivial volume |
+
+A ten-minute match costs about half a cent. The single largest cost decision
+was deleting one line of Terraform (`enable_nat_gateway`), which was worth more
+than every other optimization combined.
+
+### Cost controls
+
+- Servers self-terminate when empty
+- `max_concurrent_sessions` caps how many tasks can exist at once, which bounds
+  worst-case spend regardless of who is calling the API
+- API Gateway throttling (5 req/s, burst 10)
+- ECR lifecycle policy expires old images
+- Game server logs have a 7-day retention rather than the never-expire default
+- An AWS Budgets alarm as the backstop
+
+Container Insights is currently enabled, which publishes per-task CPU and memory
+metrics and bills for them. It's on to gather right-sizing numbers; leaving it
+off is the cheaper steady state once the task is sized.
+
+---
