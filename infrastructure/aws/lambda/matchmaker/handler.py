@@ -34,6 +34,8 @@ SESSION_STALE_SECONDS = 45
 # many Fargate tasks at once.
 MAX_CONCURRENT_SESSIONS = int(os.environ.get("MAX_CONCURRENT_SESSIONS", "4"))
 
+METRICS_NAMESPACE = os.environ.get("METRICS_NAMESPACE", "GroundTrace/Matchmaker")
+
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
@@ -110,6 +112,8 @@ def join_queue():
         "expiresAt": now + TICKET_TTL_SECONDS,
     })
 
+    emit_metric("TicketsCreated", 1)
+
     try_form_match()
 
     return {"ticketId": ticket_id, "status": "waiting"}
@@ -134,7 +138,13 @@ def try_form_match():
     session = find_joinable_session()
     if session:
         free_slots = int(session.get("maxPlayers", PLAYERS_PER_MATCH)) - int(session.get("playerCount", 0))
-        assign_tickets(waiting[:free_slots], session["sessionId"])
+        claimed = assign_tickets(waiting[:free_slots], session["sessionId"])
+
+        # The metric that measures what backfill is actually worth: every one
+        # of these is a container that didn't have to be cold-started.
+        if claimed:
+            emit_metric("SessionsBackfilled", 1,
+                        sessionId = session["sessionId"], players = len(claimed))
         return
 
     # Nothing to join, so a new server has to be worth it: only provision
@@ -145,23 +155,30 @@ def try_form_match():
     if active_session_count() >= MAX_CONCURRENT_SESSIONS:
         # Leave everyone queued rather than provisioning past the cap. They
         # keep polling and get matched once something frees up.
+        emit_metric("CapacityCapHit", 1)
         return
 
+    now = int(time.time())
     claimed = []
     for ticket in waiting:
         if claim_ticket(ticket["ticketId"]):
             claimed.append(ticket["ticketId"])
+            emit_metric("TimeToMatchSeconds", now - int(ticket["queuedAt"]), "Seconds")
         else:
             release_tickets(claimed)
+            emit_metric("ClaimContention", 1)
             return
 
     try:
         session_id = provision_session()
     except Exception:
         release_tickets(claimed)
+        emit_metric("ProvisionFailures", 1)
         raise
 
     stamp_session(claimed, session_id)
+    emit_metric("MatchesFormed", 1)
+    emit_metric("ServersProvisioned", 1, sessionId = session_id)
 
 def find_joinable_session():
     """An existing server that's up, reachable, and has room.
@@ -192,12 +209,27 @@ def find_joinable_session():
     return None
 
 def assign_tickets(tickets, session_id):
-    claimed = []
+    """Claim what we can and point it at a session.
+
+    Returns the tickets actually claimed - a claim can lose to a concurrent
+    invocation, so this is not always everything that was passed in.
+    """
+    now = int(time.time())
+    claimed_ids = []
+    claimed_tickets = []
+
     for ticket in tickets:
         if claim_ticket(ticket["ticketId"]):
-            claimed.append(ticket["ticketId"])
+            claimed_ids.append(ticket["ticketId"])
+            claimed_tickets.append(ticket)
+            emit_metric("TimeToMatchSeconds", now - int(ticket["queuedAt"]), "Seconds")
 
-    stamp_session(claimed, session_id)
+    stamp_session(claimed_ids, session_id)
+
+    if claimed_tickets:
+        emit_metric("MatchesFormed", 1)
+
+    return claimed_tickets
 
 def stamp_session(ticket_ids, session_id):
     for ticket_id in ticket_ids:
@@ -354,6 +386,13 @@ def resolve_public_ip(session):
             ExpressionAttributeValues = {":ip": ip},
         )
 
+        # The real cold-start number: RunTask to a reachable address. This is
+        # the first poll that found an IP, so it overstates slightly by up to
+        # one poll interval - but it's measured rather than guessed.
+        emit_metric("ProvisionDurationSeconds",
+                    int(time.time()) - int(session["createdAt"]), "Seconds",
+                    sessionId = session["sessionId"])
+
     return ip
 
 def heartbeat(session_id, body):
@@ -381,6 +420,33 @@ def heartbeat(session_id, body):
 def deregister(session_id):
     sessions.delete_item(Key = {"sessionId": session_id})
     return {"status": "deregistered"}
+
+def emit_metric(name, value, unit = "Count", **properties):
+    """Publish a metric via CloudWatch Embedded Metric Format.
+
+    EMF works by writing a specially shaped JSON line to stdout, which
+    CloudWatch parses out of the log stream and turns into a metric. That
+    avoids a PutMetricData call on every invocation - no extra latency in the
+    request path, no extra IAM permission, and no failure mode if the metrics
+    API is having a bad day.
+
+    Uses print rather than the logger on purpose: Lambda's default log format
+    prefixes each line with a timestamp, request id and level, which would
+    stop CloudWatch recognising the JSON as EMF.
+    """
+    payload = {
+        "_aws": {
+            "Timestamp": int(time.time() * 1000),
+            "CloudWatchMetrics": [{
+                "Namespace": METRICS_NAMESPACE,
+                "Dimensions": [[]],
+                "Metrics": [{"Name": name, "Unit": unit}],
+            }],
+        },
+        name: value,
+    }
+    payload.update(properties)
+    print(json.dumps(payload, default = decimal_default))
 
 def respond(code, body):
     return {
