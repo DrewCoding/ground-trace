@@ -230,8 +230,22 @@ bash scripts/run-server.sh
 It resolves networking by tag, launches one task, waits for `RUNNING`, and
 prints the address. The manual version of what the matchmaker automates.
 
+## State backend
+
+Terraform state lives in a versioned, encrypted S3 bucket with public access
+blocked. Versioning is the point: a corrupted or badly-applied state can be
+rolled back to a previous object version.
+
+Locking uses **S3-native conditional writes** (`use_lockfile = true`) rather
+than a DynamoDB lock table. The DynamoDB pattern that most guides still show
+was deprecated in Terraform 1.11 and is slated for removal — S3 gained
+conditional write support, so the separate table is no longer needed.
+
+The bucket is created out-of-band rather than by Terraform, since a bucket
+can't sensibly bootstrap the state file that describes it.
+
 ## Up Next
 
 - Frontend live monitoring tickets and containers
-- CI/CD Pipeline for changes made to the client software
-- S3 and DynamoDB state locking for tfstate
+- CI/CD pipeline for client and server builds
+- Cognito for authenticated queue tickets
