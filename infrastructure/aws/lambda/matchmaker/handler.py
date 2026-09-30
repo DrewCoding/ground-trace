@@ -49,18 +49,28 @@ class MatchmakerError(Exception):
     """Something went wrong that the caller should hear a real reason for."""
 
 def lambda_handler(event, context):
-    # HTTP API v2 lowercases header names, so this must be "x-api-key" -
-    # "X-Api-Key" would never match. compare_digest rather than != so the
-    # comparison doesn't leak the key a character at a time via timing.
-    headers = event.get("headers") or {}
-    if not hmac.compare_digest(headers.get("x-api-key", ""), API_KEY):
-        return respond(403, {"error": "forbidden"})
-
     method = event["requestContext"]["http"]["method"]
     path = event["requestContext"]["http"]["path"]
     params = event.get("pathParameters") or {}
 
+    # The dashboard read is deliberately unauthenticated: a key shipped in a
+    # browser bundle is visible in devtools, so requiring one would be
+    # theatre. It exposes no identifiers that can be acted on, and API
+    # Gateway throttling bounds abuse. Everything that mutates state or
+    # spends money still requires the key.
+    #
+    # HTTP API v2 lowercases header names, so this must be "x-api-key".
+    # compare_digest rather than != so the comparison doesn't leak the key a
+    # character at a time via timing.
+    if not (method == "GET" and path == "/dashboard"):
+        headers = event.get("headers") or {}
+        if not hmac.compare_digest(headers.get("x-api-key", ""), API_KEY):
+            return respond(403, {"error": "forbidden"})
+
     try:
+        if method == "GET" and path == "/dashboard":
+            return respond(200, dashboard_snapshot())
+
         if method == "POST" and path == "/queue":
             return respond(200, join_queue())
 
@@ -100,6 +110,53 @@ def lambda_handler(event, context):
         # details shouldn't leak out of a public endpoint.
         log.error("unhandled on %s %s: %s\n%s", method, path, exc, traceback.format_exc())
         return respond(500, {"error": "internal error"})
+
+def dashboard_snapshot():
+    """Everything the status page renders, in one request.
+
+    Identifiers are truncated on purpose. A full sessionId is enough to spoof
+    a heartbeat or deregister a session, and a full ticketId is enough to
+    cancel someone else's place in the queue - so this returns only enough of
+    each to tell rows apart visually. Public IPs are omitted entirely rather
+    than advertising live game servers to anyone who loads the page.
+    """
+    now = int(time.time())
+
+    live = []
+    for item in sessions.scan().get("Items", []):
+        heartbeat_age = now - int(item.get("lastHeartbeat", 0))
+        live.append({
+            "id": item["sessionId"][:8],
+            "status": item.get("status", "unknown"),
+            "playerCount": int(item.get("playerCount", 0)),
+            "maxPlayers": int(item.get("maxPlayers", PLAYERS_PER_MATCH)),
+            "ageSeconds": now - int(item.get("createdAt", now)),
+            "heartbeatAgeSeconds": heartbeat_age,
+            # Surfaces the distinction the matchmaker itself makes: a row can
+            # exist while its server is already gone.
+            "stale": heartbeat_age > SESSION_STALE_SECONDS,
+            "ready": bool(item.get("publicIp")),
+        })
+
+    waiting = []
+    for item in queue.scan().get("Items", []):
+        if item.get("status") != "waiting":
+            continue
+        waiting.append({
+            "id": item["ticketId"][:8],
+            "waitingSeconds": now - int(item.get("queuedAt", now)),
+        })
+
+    return {
+        "generatedAt": now,
+        "sessions": sorted(live, key = lambda s: s["ageSeconds"]),
+        "queue": sorted(waiting, key = lambda t: -t["waitingSeconds"]),
+        "capacity": {
+            "active": len(live),
+            "max": MAX_CONCURRENT_SESSIONS,
+            "playersPerMatch": PLAYERS_PER_MATCH,
+        },
+    }
 
 def join_queue():
     ticket_id = str(uuid.uuid4())
