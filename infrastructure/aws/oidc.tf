@@ -7,12 +7,21 @@
 # Bootstrap note: this is applied locally the first time, because CI cannot
 # assume a role that does not exist yet.
 
-# Referenced, not managed. AWS permits one OIDC provider per URL per account,
-# and this one already existed - it's shared account-level infrastructure
-# rather than something this project owns. A data source means destroying this
-# project can't take out anything else that federates through it.
-data "aws_iam_openid_connect_provider" "github" {
-  url = "https://token.actions.githubusercontent.com"
+# The provider is shared account-level infrastructure that already existed, so
+# this project references it rather than owning it - destroying this project
+# must not break anything else federating through it.
+#
+# Its ARN is derived rather than looked up with a data source. A lookup needs
+# iam:ListOpenIDConnectProviders, which PowerUserAccess does not grant, and
+# granting it would be circular: the policy conferring the permission would
+# itself reference the data source that needs the permission to be read. The
+# ARN is deterministic given the account and the provider URL, so deriving it
+# sidesteps both problems. If the provider doesn't exist, IAM rejects the role
+# at apply time with a clear error about the principal.
+data "aws_caller_identity" "current" {}
+
+locals {
+  github_oidc_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
 }
 
 data "aws_iam_policy_document" "github_assume" {
@@ -22,7 +31,7 @@ data "aws_iam_policy_document" "github_assume" {
 
     principals {
       type        = "Federated"
-      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
+      identifiers = [local.github_oidc_arn]
     }
 
     condition {
