@@ -27,6 +27,12 @@ variable "project_name" {
     default = "ground-trace"
 }
 
+variable "github_repository" {
+    type = string
+    default = "DrewCoding/ground-trace"
+    description = "owner/repo allowed to assume the deploy role."
+}
+
 variable "game_server_port"{
     type = number
     default = 7777

@@ -7,12 +7,6 @@
 # Bootstrap note: this is applied locally the first time, because CI cannot
 # assume a role that does not exist yet.
 
-variable "github_repository" {
-  type        = string
-  default     = "DrewCoding/ground-trace"
-  description = "owner/repo allowed to assume the deploy role."
-}
-
 # Referenced, not managed. AWS permits one OIDC provider per URL per account,
 # and this one already existed - it's shared account-level infrastructure
 # rather than something this project owns. A data source means destroying this
