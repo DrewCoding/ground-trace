@@ -244,6 +244,38 @@ conditional write support, so the separate table is no longer needed.
 The bucket is created out-of-band rather than by Terraform, since a bucket
 can't sensibly bootstrap the state file that describes it.
 
+## CI/CD
+
+GitHub Actions runs `terraform plan` on pull requests (posting the plan as a
+PR comment) and `terraform apply` on merges to `main`.
+
+**No AWS credentials are stored anywhere.** The workflow federates into an IAM
+role via GitHub's OIDC provider: Actions presents a short-lived token
+describing which repository and ref is running, and STS exchanges it for
+temporary credentials. Nothing to rotate, nothing to leak from repository
+secrets.
+
+Two details worth recording, because most published examples get them wrong:
+
+**The subject claim contains immutable numeric IDs.** The real `sub` looks
+like `repo:DrewCoding@122519034/ground-trace@1345255887:ref:refs/heads/main`,
+not the `repo:owner/name:*` form every guide shows. Pinning those IDs is
+what makes the trust rename-proof: a repository that is renamed, or deleted
+and recreated by someone else under the same name, gets a different ID and
+silently stops matching.
+
+**The provider ARN is derived, not looked up.** Using a
+`aws_iam_openid_connect_provider` data source requires
+`iam:ListOpenIDConnectProviders`, which `PowerUserAccess` does not grant - and
+granting it is circular, since the policy conferring the permission would
+reference the data source needing that permission to be read. The ARN is
+deterministic from the account ID and the provider URL, so constructing it
+avoids both the extra permission and the dependency cycle.
+
+Related: `PowerUserAccess` is `NotAction: ["iam:*", ...]` plus a short
+allowlist, so it grants almost nothing in IAM. Every IAM action this project
+needs is enumerated explicitly and scoped to the `ground-trace-*` prefix.
+
 ## Up Next
 
 - Frontend live monitoring tickets and containers
