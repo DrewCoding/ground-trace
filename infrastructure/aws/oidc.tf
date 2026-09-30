@@ -13,15 +13,12 @@ variable "github_repository" {
   description = "owner/repo allowed to assume the deploy role."
 }
 
-resource "aws_iam_openid_connect_provider" "github" {
+# Referenced, not managed. AWS permits one OIDC provider per URL per account,
+# and this one already existed - it's shared account-level infrastructure
+# rather than something this project owns. A data source means destroying this
+# project can't take out anything else that federates through it.
+data "aws_iam_openid_connect_provider" "github" {
   url = "https://token.actions.githubusercontent.com"
-
-  # The audience GitHub requests when the workflow asks for a token.
-  client_id_list = ["sts.amazonaws.com"]
-
-  # AWS maintains its own trust store for this specific provider and no longer
-  # validates the thumbprint, but the API still wants the field populated.
-  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
 }
 
 data "aws_iam_policy_document" "github_assume" {
@@ -31,7 +28,7 @@ data "aws_iam_policy_document" "github_assume" {
 
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
     }
 
     condition {
@@ -106,17 +103,9 @@ data "aws_iam_policy_document" "github_actions_extra" {
     resources = ["arn:aws:iam::*:policy/${var.project_name}-*"]
   }
 
-  # The OIDC provider itself, so Terraform can keep managing it.
-  statement {
-    sid    = "ManageOidcProvider"
-    effect = "Allow"
-    actions = [
-      "iam:GetOpenIDConnectProvider",
-      "iam:UpdateOpenIDConnectProviderThumbprint",
-      "iam:TagOpenIDConnectProvider",
-    ]
-    resources = [aws_iam_openid_connect_provider.github.arn]
-  }
+  # No write permissions on the OIDC provider: it's shared account-level
+  # infrastructure this project only reads. The data source needs
+  # iam:GetOpenIDConnectProvider, which PowerUserAccess already allows.
 
   # Read and write the remote state, including the .tflock object.
   statement {
