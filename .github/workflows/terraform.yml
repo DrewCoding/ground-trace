@@ -30,6 +30,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Debug OIDC claims
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken('sts.amazonaws.com')
+            const payload = JSON.parse(
+              Buffer.from(token.split('.')[1], 'base64').toString()
+            )
+            core.info('sub: ' + payload.sub)
+            core.info('aud: ' + payload.aud)
+
       # No stored access keys. This exchanges the workflow's OIDC token for
       # short-lived credentials via the role's trust policy.
       - name: Configure AWS credentials
