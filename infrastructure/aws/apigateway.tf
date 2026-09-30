@@ -1,6 +1,19 @@
 resource "aws_apigatewayv2_api" "matchmaker" {
     name = "${var.project_name}-matchmaker"
     protocol_type = "HTTP"
+
+    # Needed for the browser dashboard. CORS is not a security control here -
+    # the dashboard route is unauthenticated by design, so there is nothing an
+    # origin restriction would protect. What it does do is keep browsers from
+    # reaching the mutating routes cross-origin: only GET is allowed, and
+    # x-api-key is not an allowed header, so a page cannot queue a player or
+    # spoof a heartbeat even with a stolen key.
+    cors_configuration {
+        allow_origins = ["*"]
+        allow_methods = ["GET"]
+        allow_headers = ["content-type"]
+        max_age       = 300
+    }
 }
 
 resource "aws_apigatewayv2_integration" "matchmaker" {
@@ -13,6 +26,7 @@ resource "aws_apigatewayv2_integration" "matchmaker" {
 
 locals {
     matchmaker_routes = [
+        "GET /dashboard",
         "POST /queue",
         "GET /queue/{ticketId}",
         "DELETE /queue/{ticketId}",
