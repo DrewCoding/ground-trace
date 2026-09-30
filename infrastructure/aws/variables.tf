@@ -29,8 +29,14 @@ variable "project_name" {
 
 variable "github_repository" {
     type = string
-    default = "DrewCoding/ground-trace"
-    description = "owner/repo allowed to assume the deploy role."
+    default = "DrewCoding@122519034/ground-trace@1345255887"
+    description = <<-EOT
+      owner/repo allowed to assume the deploy role, including GitHub's
+      immutable numeric IDs. The IDs are not decoration: pinning them means a
+      renamed repo - or a different repo that later takes this name - cannot
+      inherit this trust. Read the exact value from the sub claim of a
+      workflow's OIDC token; a plain owner/repo string will not match.
+    EOT
 }
 
 variable "game_server_port"{
