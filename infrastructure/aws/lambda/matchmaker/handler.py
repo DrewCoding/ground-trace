@@ -53,11 +53,15 @@ def lambda_handler(event, context):
     path = event["requestContext"]["http"]["path"]
     params = event.get("pathParameters") or {}
 
-    # The dashboard read is deliberately unauthenticated: a key shipped in a
-    # browser bundle is visible in devtools, so requiring one would be
-    # theatre. It exposes no identifiers that can be acted on, and API
-    # Gateway throttling bounds abuse. Everything that mutates state or
-    # spends money still requires the key.
+    # The dashboard route is exempt from the shared key because API Gateway
+    # has already authenticated it with a Cognito JWT - the request arrives
+    # with a Bearer token and no x-api-key, so requiring one here would reject
+    # every legitimate request. Not an unauthenticated path: an invalid token
+    # is refused by the authorizer before this function is ever invoked.
+    #
+    # Identifiers in the response are still truncated, because the key the
+    # game client carries is recoverable and shouldn't be the only thing
+    # standing between a leak and an actionable session id.
     #
     # HTTP API v2 lowercases header names, so this must be "x-api-key".
     # compare_digest rather than != so the comparison doesn't leak the key a

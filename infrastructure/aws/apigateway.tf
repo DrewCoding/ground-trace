@@ -8,10 +8,14 @@ resource "aws_apigatewayv2_api" "matchmaker" {
     # reaching the mutating routes cross-origin: only GET is allowed, and
     # x-api-key is not an allowed header, so a page cannot queue a player or
     # spoof a heartbeat even with a stolen key.
+    # authorization must be allowed or the browser's preflight rejects the
+    # dashboard's Bearer token before the request is ever sent. x-api-key is
+    # deliberately absent: a page cannot reach the mutating routes
+    # cross-origin even with a leaked key, since only GET is permitted.
     cors_configuration {
         allow_origins = ["*"]
         allow_methods = ["GET"]
-        allow_headers = ["content-type"]
+        allow_headers = ["content-type", "authorization"]
         max_age       = 300
     }
 }
@@ -25,8 +29,9 @@ resource "aws_apigatewayv2_integration" "matchmaker" {
 }
 
 locals {
+    # GET /dashboard is declared separately - it's the only route carrying a
+    # JWT authorizer, so it can't share this for_each.
     matchmaker_routes = [
-        "GET /dashboard",
         "POST /queue",
         "GET /queue/{ticketId}",
         "DELETE /queue/{ticketId}",
@@ -41,6 +46,20 @@ resource "aws_apigatewayv2_route" "matchmaker" {
     api_id = aws_apigatewayv2_api.matchmaker.id
     route_key = each.value
     target = "integrations/${aws_apigatewayv2_integration.matchmaker.id}"
+}
+
+# Gated by Cognito rather than the shared API key. The key ships inside the
+# game client and is therefore recoverable; operator access shouldn't rest on
+# it. API Gateway rejects an invalid token before the Lambda is ever invoked,
+# so protecting the page without protecting this route would be pointless -
+# the data is behind the same gate as the UI.
+resource "aws_apigatewayv2_route" "dashboard" {
+    api_id    = aws_apigatewayv2_api.matchmaker.id
+    route_key = "GET /dashboard"
+    target    = "integrations/${aws_apigatewayv2_integration.matchmaker.id}"
+
+    authorization_type = "JWT"
+    authorizer_id      = aws_apigatewayv2_authorizer.dashboard.id
 }
 
 resource "aws_apigatewayv2_stage" "default"{
