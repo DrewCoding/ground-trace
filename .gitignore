@@ -1,0 +1,6 @@
+# Python bytecode and local environments. lambda.tf also excludes bytecode
+# from the deployment zip, but it shouldn't be committed either.
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/

@@ -113,6 +113,10 @@ resource "aws_cloudwatch_dashboard" "matchmaker" {
       {
         # CapacityCapHit means demand exceeded a deliberate cost ceiling -
         # that's different from something being broken, and worth separating.
+        #
+        # Matching re-runs on every waiting poll, so CapacityCapHit and
+        # ClaimContention count polls, not players: a pair waiting a minute at
+        # the cap reads as dozens. Compare their shape over time, not totals.
         type   = "metric"
         x      = 8
         y      = 12
@@ -126,8 +130,10 @@ resource "aws_cloudwatch_dashboard" "matchmaker" {
           stat   = "Sum"
           metrics = [
             [local.matchmaker_namespace, "ProvisionFailures"],
+            [".", "MatchingErrors"],
             [".", "CapacityCapHit"],
             [".", "ClaimContention"],
+            [".", "TicketNotYetIndexed"],
           ]
         }
       },
@@ -148,6 +154,7 @@ resource "aws_cloudwatch_dashboard" "matchmaker" {
             [".", "Errors", ".", ".", { stat = "Sum" }],
             [".", "Throttles", ".", ".", { stat = "Sum" }],
             [".", "Duration", ".", ".", { stat = "Average", yAxis = "right" }],
+            [".", "Errors", ".", aws_lambda_function.ecs_events.function_name, { stat = "Sum", label = "ecs-events Errors" }],
           ]
         }
       },
@@ -194,6 +201,48 @@ resource "aws_cloudwatch_dashboard" "matchmaker" {
           ]
         }
       },
+
+      {
+        # What Fargate actually bills: image pull to task stop, per second,
+        # one-minute minimum. Reported by ecs_events.py when a task stops, so
+        # it covers crashed and manually launched servers too. Multiply by the
+        # region's per-second rate for cost - kept out of here because rates
+        # change and a stale constant would quietly lie.
+        type   = "metric"
+        x      = 0
+        y      = 24
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Billed game server time (task-minutes)"
+          view   = "timeSeries"
+          region = var.aws_region
+          period = 3600
+          metrics = [
+            [local.matchmaker_namespace, "TaskBilledSeconds", { id = "billed", stat = "Sum", visible = false }],
+            [{ expression = "billed / 60", label = "task-minutes", id = "minutes" }],
+          ]
+        }
+      },
+
+      {
+        type   = "metric"
+        x      = 12
+        y      = 24
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Game server lifetime"
+          view   = "timeSeries"
+          region = var.aws_region
+          period = 3600
+          metrics = [
+            [local.matchmaker_namespace, "TaskBilledSeconds", { stat = "Average", label = "avg seconds" }],
+            ["...", { stat = "Maximum", label = "max seconds" }],
+            ["...", { stat = "SampleCount", label = "tasks stopped", yAxis = "right" }],
+          ]
+        }
+      },
     ]
   })
 }
@@ -223,6 +272,36 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
   namespace           = "AWS/Lambda"
   metric_name         = "Errors"
   dimensions          = { FunctionName = aws_lambda_function.matchmaker.function_name }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+}
+
+# Matching failures are caught so they can't fail a join or poll, which also
+# hides them from the Lambda Errors alarm above. This is their replacement.
+resource "aws_cloudwatch_metric_alarm" "matching_errors" {
+  alarm_name          = "${var.project_name}-matching-errors"
+  alarm_description   = "Matching raised an exception; players may not be getting matched."
+  namespace           = local.matchmaker_namespace
+  metric_name         = "MatchingErrors"
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+}
+
+# A failing listener leaves stopped servers' rows holding cap slots until TTL.
+resource "aws_cloudwatch_metric_alarm" "ecs_events_errors" {
+  alarm_name          = "${var.project_name}-ecs-events-errors"
+  alarm_description   = "ECS task-state listener failed; ended sessions may still count against the server cap."
+  namespace           = "AWS/Lambda"
+  metric_name         = "Errors"
+  dimensions          = { FunctionName = aws_lambda_function.ecs_events.function_name }
   statistic           = "Sum"
   period              = 300
   evaluation_periods  = 1

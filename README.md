@@ -27,24 +27,27 @@ is HTTP and this is a 20 Hz UDP game loop.
 | **ECS**         | `ground-trace-cluster`                | Fargate only, Container Insights enabled                                                                |
 |                 | Task definition rev 4                 | 512 CPU / 1024 MB, `awsvpc`, UDP 7777, env-configured                                                   |
 | **Lambda**      | `ground-trace-matchmaker`             | `python3.13`, 256 MB, boto3 only — no dependencies to package                                           |
+|                 | `ground-trace-ecs-events`             | Same zip, 128 MB. Ends sessions and reports billed time when a game server task stops                    |
+| **EventBridge** | `ground-trace-game-server-stopped`    | ECS task state changes, `STOPPED` only, game server cluster only → `ecs-events`                         |
 | **API Gateway** | HTTP API (v2)                         | `POST /queue`, `GET·DELETE /queue/{ticketId}`, `POST /sessions/{id}/heartbeat`, `DELETE /sessions/{id}` |
 | **DynamoDB**    | `ground-trace-queue`                  | PK `ticketId`, GSI `status-queuedAt-index`, TTL on `expiresAt`, on-demand                               |
 |                 | `ground-trace-sessions`               | PK `sessionId`, GSI `status-createdAt-index`, TTL on `expiresAt`, on-demand                             |
 | **CloudWatch**  | `/ecs/ground-trace-game-server`       | 7-day retention                                                                                         |
-|                 | `/aws/lambda/ground-trace-matchmaker` | Lambda logs                                                                                             |
+|                 | `/aws/lambda/ground-trace-*`          | Logs for both functions, 7-day retention                                                                |
 |                 | Container Insights                    | Per-task CPU/memory metrics                                                                             |
 
 ### IAM
 
-Three roles, each scoped to exactly what assumes it:
+Four roles, each scoped to exactly what assumes it:
 
 | Role                              | Trusted by                | Grants                                                                                                                                                                           |
 | --------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ground-trace-ecs-task-execution` | `ecs-tasks.amazonaws.com` | Managed `AmazonECSTaskExecutionRolePolicy` — pull from ECR, write logs. Used by the ECS agent, never by game code.                                                               |
 | `ground-trace-game-server-task`   | `ecs-tasks.amazonaws.com` | **Nothing.** The game server makes no AWS API calls, so it holds no permissions. Defined so adding one later is a policy change, not a restructure.                              |
 | `ground-trace-matchmaker`         | `lambda.amazonaws.com`    | DynamoDB read/write on both tables **and their indexes**, `ecs:RunTask`/`DescribeTasks`/`StopTask`, `ec2:DescribeNetworkInterfaces`, `iam:PassRole` scoped to the two task roles |
+| `ground-trace-ecs-events`         | `lambda.amazonaws.com`    | `dynamodb:DeleteItem` on the sessions table. Nothing else: it can't read the queue or launch tasks                                                                               |
 
-Two details in that last row are the ones people get wrong:
+Two details in the matchmaker row are the ones people get wrong:
 
 - **A GSI is a separate ARN from its table.** Granting `Query` on
   `table/ground-trace-sessions` does not permit querying
@@ -57,15 +60,16 @@ Two details in that last row are the ones people get wrong:
 ### Flow
 
 1. Client `POST /queue` → a ticket row in DynamoDB. No server exists yet.
-2. Each join re-evaluates the queue. Once enough players are waiting, their
-   tickets are claimed atomically and a server is provisioned or an
-   existing server with a free slot is reused.
+2. Every join, and every poll of a waiting ticket, re-evaluates the queue. Once
+   enough players are waiting, their tickets are claimed atomically and a
+   server is provisioned or an existing server with a free slot is reused.
 3. Client polls `GET /queue/{ticketId}` → `waiting` → `provisioning` → `matched`
    with an `{ip, port}`.
 4. Client connects directly over UDP. The game's own lobby confirms both
    players actually arrived before starting.
 5. The server heartbeats its state every 10s. When the last player leaves, it
-   exits, which stops the task and ends billing.
+   exits, which stops the task and ends billing. The task's `STOPPED` event
+   removes its session row and records how long it was billed for.
 
 ---
 
@@ -78,10 +82,18 @@ infrastructure/aws/
   ecr.tf          image repository + lifecycle policy
   ecs.tf          Fargate cluster, task definition, security group
   dynamodb.tf     queue + sessions tables, both with GSI and TTL
-  iam.tf          task execution / task / matchmaker roles
-  lambda.tf       matchmaker function, packaged by archive_file
+  iam.tf          task execution / task / matchmaker / ecs-events roles
+  lambda.tf       both functions, packaged together by archive_file
+  ecs_events.tf   EventBridge rule: game server tasks stopping -> ecs-events
   apigateway.tf   HTTP API, routes, throttling
-  lambda/matchmaker/handler.py
+  dashboard.tf    CloudWatch dashboard and alarms
+  lambda/
+    matchmaker/   everything in here ships
+      handler.py      API entry point: auth, routing, errors
+      ecs_events.py   EventBridge entry point
+      mm/             tickets, matching, sessions, backends/
+    tests/        pytest + moto; never shipped
+docs/             research notes and plans
 scripts/
   run-server.sh   launch one server by hand and print its address
 ```
@@ -114,24 +126,86 @@ empty for a configurable window, which stops the task and ends the charge.
 Scale-to-zero isn't something the infrastructure does to the workload, the
 workload has to participate.
 
-### TTL is garbage collection; `lastHeartbeat` is correctness
+### TTL is garbage collection; age is correctness
 
-Session rows carry a DynamoDB TTL, but TTL is explicitly best-effort: AWS only
-promises deletion "typically within 48 hours." A server that dies without
-deregistering leaves a row that still looks joinable.
+Both tables carry a DynamoDB TTL, but TTL is explicitly best-effort: AWS only
+promises deletion "within a few days," and until then expired items still come
+back from reads, queries and scans. A server that dies without deregistering
+leaves a row that still looks joinable.
 
 So liveness is decided by age, not by TTL. Observed in practice: a session row
 advertised a dead server for **139 seconds** before TTL removed it. Anything
 trusting TTL alone would have routed a player to an address with nothing on it.
 
-### Concurrent joins can't double-provision
+The same rule applies to tickets. Each poll records `lastSeenAt` and pushes the
+ticket's expiry forward, so:
 
-Two players joining within the same instant produce two Lambda invocations that
-both see a full queue. Each ticket is claimed with a conditional `UpdateItem`
-(`status` must still be `waiting`), so exactly one invocation wins; the loser
-rolls back its claims and leaves its player queued.
+- a player whose client stopped polling for 10 seconds is a ghost, and is
+  never matched — otherwise a real player could be paired with nobody, and a
+  server launched for one person;
+- a player who is still polling is never expired, however long they wait;
+- a ticket nobody has polled for five minutes reads as `expired`, whether or
+  not TTL has deleted it yet.
+
+### Matching is level-triggered
+
+Matching evaluates the queue as it stands and does whatever is possible right
+now — and it runs on every poll of a waiting ticket, not just on join.
+
+Run only on join, it missed every way a match becomes possible without a new
+player arriving: a server stopping and freeing capacity, an opponent leaving
+and opening a backfill slot, claims released after a lost race or a failed
+launch. Players already waiting sat there until someone new showed up. It
+could even miss the ordinary case: the joining player's own ticket reaches the
+GSI asynchronously, so the query run milliseconds after writing it can come
+back without it.
+
+Clients poll every two seconds anyway, so the polls are the clock. Nothing runs
+on a timer, and nothing runs while nobody is waiting. Matching failures are
+logged and counted, but never fail the join or poll that triggered them — the
+next poll retries.
+
+### Concurrent matchers can't double-claim
+
+With every join and poll able to trigger matching, several invocations
+regularly see the same waiting tickets at once. Each ticket is claimed with a
+conditional `UpdateItem` (`status` must still be `waiting`), so exactly one
+invocation wins; the loser rolls back its claims and leaves its players queued.
 
 Optimistic concurrency, no locks, no coordination service.
+
+The server cap is a check-then-act — count sessions, then `RunTask` — so two
+invocations claiming *different* pairs at the same moment can both pass it.
+The overshoot is bounded by how many disjoint full matches are waiting at
+once. A true hard cap needs an atomic counter; that's a deliberate
+non-goal at this scale.
+
+### A session row lives exactly as long as its task is billed
+
+The row is written right after `RunTask` succeeds, and deleted by the
+`ecs-events` function the moment ECS reports the task `STOPPED` — whatever
+stopped it: a normal exit, a crash, an OOM kill, `StopTask`. That's the span
+Fargate bills for, so counting rows counts exactly the servers being paid for,
+and the cap frees up within seconds of a server ending rather than whenever TTL
+gets around to it.
+
+The game server never deregisters itself: an HTTP call fired while the process
+is exiting rarely completes. The `STOPPED` event is the one reliable signal.
+
+ECS delivers events at least once. The delete is conditional on the row
+existing, so only the first delivery gets the row back, and only that one
+reports `TaskBilledSeconds`.
+
+### No blind upserts
+
+`UpdateItem` creates the item if the key doesn't exist. Every update to a row
+that something else may have deleted — a heartbeat, a cached IP, a ticket
+being stamped or kept alive — is conditional on the row existing.
+
+The heartbeat is the one that mattered. Unconditional, it let anyone holding
+the game client's (extractable) API key create sessions out of made-up ids, and
+since sessions count toward the server cap, a handful of requests stopped all
+matchmaking. Unknown sessions now get a 404.
 
 ### Provisioning never blocks
 
@@ -151,7 +225,7 @@ Someone outside has to look it up.
 Rather than run a poller on a timer, the client's own status request does it:
 if a matched session has no address yet, that request performs the
 `DescribeTasks` → `DescribeNetworkInterfaces` lookup and caches the result. No
-EventBridge rule, no idle compute.
+timer, no idle compute.
 
 ### Backfill before provisioning
 
@@ -188,7 +262,7 @@ than every other optimization combined.
 - Servers self-terminate when empty
 - `max_concurrent_sessions` caps how many tasks can exist at once, which bounds
   worst-case spend regardless of who is calling the API
-- API Gateway throttling (5 req/s, burst 10)
+- API Gateway throttling (10 req/s, burst 5)
 - ECR lifecycle policy expires old images
 - Game server logs have a 7-day retention rather than the never-expire default
 - An AWS Budgets alarm as the backstop
@@ -229,6 +303,21 @@ bash scripts/run-server.sh
 
 It resolves networking by tag, launches one task, waits for `RUNNING`, and
 prints the address. The manual version of what the matchmaker automates.
+
+### Tests
+
+The Lambda code has a pytest suite that runs against
+[moto](https://github.com/getmoto/moto) — no AWS account or credentials
+needed. CI runs it on every change under `infrastructure/aws/lambda/`.
+
+```bash
+cd infrastructure/aws/lambda
+python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt   # .venv\Scripts\ on Windows
+.venv/bin/python -m pytest
+```
+
+On Windows, put the venv at a short path if `pip` fails with a "No such file"
+error: moto's nested package layout can exceed the 260-character path limit.
 
 ## State backend
 

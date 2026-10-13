@@ -1,0 +1,4 @@
+# Test-only. Nothing here ships: the Lambda runtime provides boto3, and
+# archive_file only zips lambda/matchmaker.
+pytest==9.1.1
+moto[dynamodb]==5.2.4
