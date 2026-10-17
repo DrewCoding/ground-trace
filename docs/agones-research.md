@@ -316,11 +316,23 @@ Agones' Unity SDK can't be exercised inside the Unity Editor without a reachable
 sidecar. `Connect()` waits up to 30 seconds and then returns `false`. Guard SDK
 calls in Editor builds.
 
-For a full local cluster, kind or k3d both run Agones, Helm and Argo CD.
+For a full local cluster, Agones documents only Minikube. On Windows that
+means the cluster lives inside Docker Desktop's VM: the address Agones reports
+is unreachable, so a narrowed UDP range is published through Docker and clients
+connect to `127.0.0.1`. k3d has the same indirection plus a load-balancer proxy
+in front of UDP, and Agones doesn't document it.
+
+This project instead runs **k3s installed natively on a Linux machine on the
+LAN** (see [phase-1.md](phase-1.md)). Nodes then have real, reachable IPs and
+host ports, like EKS nodes: Agones reports an address the Windows client can
+use directly, and the full 7000–8000 range works. k3s isn't on Agones' list of
+supported platforms (GKE, AKS, EKS, Minikube), but Akamai publishes a guide
+running Agones on a stock k3s install.
 
 ## Proposed scope
 
-1. **Local cluster.** Agones on k3d or kind, installed with Helm 4.
+1. **Local cluster.** Agones on native k3s on a LAN Linux machine, installed
+   with Helm 4. Step-by-step in [phase-1.md](phase-1.md).
 2. **Fleet.** The existing Unity server image with the Agones SDK added: Ready
    on boot, Shutdown when empty, `players` List updated over the sidecar's HTTP
    API.
@@ -339,9 +351,11 @@ For a full local cluster, kind or k3d both run Agones, Helm and Argo CD.
 
 Not verified during this research:
 
-- **Allocation with no capacity.** The reference names an `UnAllocated` state
-  but doesn't document the response shape. Check the allocator's gRPC proto
-  before writing the failure path.
+- **Allocation with no capacity.** Partly answered: Agones' fleet quickstart
+  lists the possible `status.state` values as `Allocated`, `UnAllocated` (no
+  GameServer matched) and `Contention` (too many concurrent requests). Still
+  unchecked is how the allocator's *REST* endpoint reports those — check the
+  gRPC proto / Swagger before writing Phase 2's failure path.
 - **Buffer autoscaler with `minReplicas: 0`.** The docs only state that
   webhook autoscalers can scale to zero.
 - **Unity Linux ARM64 server builds.** These would decide whether Graviton
