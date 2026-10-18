@@ -168,6 +168,35 @@ def test_lone_player_is_backfilled_once_the_server_reports_a_free_slot(agones):
     assert len(agones.requests) == 1
 
 
+# --- Orchestrator dimension --------------------------------------------------
+
+def test_metrics_keep_the_undimensioned_copy_the_dashboard_reads(ecs, capsys):
+    join()
+    join()
+
+    payload = emitted_metrics(capsys)["MatchesFormed"][0]
+
+    # [] is the metric dashboard.tf and the alarms query. Dropping it would
+    # blank them; ["Orchestrator"] is the per-backend copy for Phase 6.
+    assert payload["_aws"]["CloudWatchMetrics"][0]["Dimensions"] == [[], ["Orchestrator"]]
+
+
+def test_fargate_metrics_are_labelled_fargate(ecs, capsys):
+    join()
+    join()
+
+    assert emitted_metrics(capsys)["MatchesFormed"][0]["Orchestrator"] == "fargate"
+
+
+def test_agones_metrics_are_labelled_agones(agones, capsys):
+    join()
+    join()
+
+    metrics = emitted_metrics(capsys)
+    assert metrics["MatchesFormed"][0]["Orchestrator"] == "agones"
+    assert metrics["AllocationDurationSeconds"][0]["Orchestrator"] == "agones"
+
+
 # --- AllocatorClient: the real HTTP handling -------------------------------
 
 def _http_error(code, body):
