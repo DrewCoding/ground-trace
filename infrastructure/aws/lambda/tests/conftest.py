@@ -22,6 +22,12 @@ os.environ.update({
     "SECURITY_GROUP_ID": "sg-test",
     "API_KEY": "test-key",
     "MAX_CONCURRENT_SESSIONS": "4",
+    # Read when mm.backends.agones is imported. The files are never opened:
+    # the agones fixture replaces the client before anything allocates.
+    "AGONES_ALLOCATOR_URL": "https://allocator.test",
+    "AGONES_CA_FILE": "/nonexistent/ca.crt",
+    "AGONES_CLIENT_CERT_FILE": "/nonexistent/client.crt",
+    "AGONES_CLIENT_KEY_FILE": "/nonexistent/client.key",
 })
 
 # Started before anything creates a boto3 client: the matchmaker builds its
@@ -110,6 +116,56 @@ def client_error(code, operation="RunTask"):
     return ClientError({"Error": {"Code": code, "Message": code}}, operation)
 
 
+# --- Agones fake ------------------------------------------------------------
+#
+# Stands in for the allocator's REST endpoint. The response shapes are the
+# ones a real Agones 1.61 allocator returned (docs/phase-2.md): 200 with the
+# server's address, 429 when no server is Ready.
+
+ALLOCATED_IP = "10.0.0.55"
+
+
+class FakeAllocator:
+    def __init__(self):
+        self.requests = []
+        self.status = 200
+        self.raise_error = None
+        self.next_port = 7000
+
+    def allocate(self, request):
+        if self.raise_error:
+            raise self.raise_error
+
+        self.requests.append(request)
+
+        if self.status == 429:
+            return 429, {"code": 8, "message": "there is no available GameServer to allocate", "details": []}
+        if self.status == 409:
+            return 409, {"code": 10, "message": "conflict in GameServer selection", "details": []}
+        if self.status != 200:
+            return self.status, {"message": "allocator broke"}
+
+        self.next_port += 1
+        return 200, {
+            "gameServerName": f"ground-trace-abc12-gs{len(self.requests)}",
+            "address": ALLOCATED_IP,
+            "ports": [{"name": "default", "port": self.next_port}],
+            "nodeName": "node-1",
+        }
+
+
+@pytest.fixture
+def agones(monkeypatch):
+    """Switch the matchmaker to the Agones backend, with a fake allocator."""
+    from mm import backends
+    from mm.backends import agones as agones_backend
+
+    fake = FakeAllocator()
+    monkeypatch.setattr(agones_backend, "allocator", fake)
+    monkeypatch.setattr(backends, "active", agones_backend)
+    return fake
+
+
 # --- Tables ----------------------------------------------------------------
 #
 # Mirrors dynamodb.tf: the key schema and both GSIs are what the matchmaker's
@@ -185,7 +241,7 @@ def get_ticket(ticket_id):
 
 
 def put_session(session_id, status = "waiting", heartbeat_ago = 0, players = 0,
-                max_players = 2, ip = "203.0.113.5", port = 7777):
+                max_players = 2, ip = "203.0.113.5", port = 7777, orchestrator = None):
     item = {
         "sessionId": session_id,
         "status": status,
@@ -199,6 +255,8 @@ def put_session(session_id, status = "waiting", heartbeat_ago = 0, players = 0,
     }
     if ip:
         item["publicIp"] = ip
+    if orchestrator:
+        item["orchestrator"] = orchestrator
     sessions_table().put_item(Item = item)
 
 

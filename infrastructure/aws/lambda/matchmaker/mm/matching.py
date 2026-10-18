@@ -58,31 +58,45 @@ def try_form_match(new_ticket = None):
     if len(waiting) < config.PLAYERS_PER_MATCH:
         return False
 
-    if sessions.active_session_count() >= config.MAX_CONCURRENT_SESSIONS:
+    if not backends.active.has_capacity():
         # Leave everyone queued rather than provisioning past the cap. Their
         # next poll tries again, so they're matched once a server stops.
         metrics.emit_metric("CapacityCapHit", 1)
         return False
 
-    now = int(time.time())
     claimed = []
     for ticket in waiting[:config.PLAYERS_PER_MATCH]:
         if claims.claim_ticket(ticket["ticketId"]):
-            claimed.append(ticket["ticketId"])
-            metrics.emit_metric("TimeToMatchSeconds", now - int(ticket["queuedAt"]), "Seconds")
+            claimed.append(ticket)
         else:
-            claims.release_tickets(claimed)
+            claims.release_tickets([t["ticketId"] for t in claimed])
             metrics.emit_metric("ClaimContention", 1)
             return False
+
+    claimed_ids = [t["ticketId"] for t in claimed]
 
     try:
         session_id = backends.active.provision()
     except Exception:
-        claims.release_tickets(claimed)
+        claims.release_tickets(claimed_ids)
         metrics.emit_metric("ProvisionFailures", 1)
         raise
 
-    claims.stamp_session(claimed, session_id)
+    if session_id is None:
+        # No server to be had right now - a warm pool with nothing Ready.
+        # Everyone goes back to waiting, and their next poll tries again.
+        claims.release_tickets(claimed_ids)
+        return False
+
+    claims.stamp_session(claimed_ids, session_id)
+
+    # Measured only once a server is in hand. Emitted at claim time, a claim
+    # later released by a failed launch or an empty pool counted as a match
+    # that never happened - once per poll for as long as the pool stayed empty.
+    now = int(time.time())
+    for ticket in claimed:
+        metrics.emit_metric("TimeToMatchSeconds", now - int(ticket["queuedAt"]), "Seconds")
+
     metrics.emit_metric("MatchesFormed", 1)
     metrics.emit_metric("ServersProvisioned", 1, sessionId = session_id)
     return True

@@ -1,7 +1,7 @@
 """Session rows: one per game server, from launch until its task stops."""
 import time
 
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
 from mm import config, ddb
@@ -42,19 +42,28 @@ def find_joinable_session():
 
 
 def active_session_count():
-    """How many game servers are being paid for right now.
+    """How many Fargate game servers are being paid for right now.
 
-    Every row is counted, live or not, and that is deliberate. A row exists
-    from RunTask until ecs_events sees the task stop, which is exactly the
-    span Fargate bills for - so a wedged server that stopped heartbeating
+    Every Fargate row is counted, live or not, and that is deliberate. A row
+    exists from RunTask until ecs_events sees the task stop, which is exactly
+    the span Fargate bills for - so a wedged server that stopped heartbeating
     still counts, because it's still costing money. Rows can't be created any
     other way: heartbeat refuses unknown sessions.
+
+    Agones rows are excluded. Nothing deletes them when their server ends -
+    ecs_events only hears about ECS tasks - so after switching ORCHESTRATOR
+    back to fargate, a few leftover rows would fill the cap until TTL got to
+    them, days later. Rows written before the orchestrator attribute existed
+    are Fargate rows.
 
     A Scan reads the whole table, which is fine at this size and would need
     revisiting at volume - a counter item or a per-status query would scale,
     this won't.
     """
-    return ddb.sessions.scan(Select = "COUNT").get("Count", 0)
+    return ddb.sessions.scan(
+        Select = "COUNT",
+        FilterExpression = Attr("orchestrator").not_exists() | Attr("orchestrator").eq("fargate"),
+    ).get("Count", 0)
 
 
 def heartbeat(session_id, body):
