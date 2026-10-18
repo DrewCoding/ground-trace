@@ -31,3 +31,12 @@ spec:
                   value: agones
                 - name: EMPTY_SHUTDOWN_SECONDS
                   value: "60"
+                # Where SessionHeartbeat reports once the server is allocated,
+                # which is what lets the matchmaker backfill into it. This is
+                # serve_local.py on the node, which must then listen on more
+                # than 127.0.0.1 (--host 0.0.0.0): the pod's loopback is its
+                # own, not the node's.
+                - name: MATCHMAKER_URL
+                  value: http://10.0.0.55:8080
+                - name: MATCHMAKER_KEY
+                  value: local-dev-key
