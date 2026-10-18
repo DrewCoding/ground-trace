@@ -108,29 +108,49 @@ state field in any body:
 releases the players for the next poll. Anything else is a failure. A real
 allocation took 0.197s.
 
-### 3. Backfill with ordered selectors
+### 3. Backfill — decided: heartbeats into the shared path
 
-One allocation request with two selectors, tried in order: an `Allocated`
-server whose `players` list has room, then a fresh `Ready` one. This replaces
-`find_joinable_session` for the Agones path. It depends on Phase 1's step C2.4
-(the server maintaining its `players` list over the sidecar's HTTP API).
+**Decision (2026-10-17):** backfill on the Agones path goes through the same
+`find_joinable_session` as Fargate, fed by the server's heartbeats (step 4).
+No `players` list, no ordered selectors, no Agones-specific code in
+`matching.py`.
 
-Two players racing for the last slot is already handled: the client re-queues
-when a join is rejected. Reserving the slot at allocation time (allocation-time
-list actions) is a later optimization — confirm the installed Agones version
-supports it first.
+Why: step 4 is needed anyway, and once an Agones server heartbeats, its
+session row carries a real `status` and `playerCount` — exactly what the
+shared backfill reads. Keeping backfill shared also keeps Phase 6 fair: the
+two backends then differ only in how a server is obtained. Its weaknesses are
+Fargate's too: backfill trusts a heartbeat up to 10s old, and two players
+racing for the last slot are resolved by the client re-queuing the one that's
+rejected.
+
+The rejected alternative, for reference: one allocation request with two
+selectors — an `Allocated` server whose `players` list has room, then a fresh
+`Ready` one — with the server maintaining that list over the sidecar's HTTP
+API (Phase 1 C2.4). It would let Agones reserve the slot atomically
+(allocation-time list actions), so it stays available as a later
+optimization.
 
 ### 4. Session identity and heartbeats
 
-Use the Agones GameServer name as the `sessionId`. The server can read its own
-name through the SDK's `GameServer()`, so `SessionHeartbeat` can report against
-it. Two details:
+The session is named after the GameServer: `provision()` uses the
+allocation's `gameServerName` as the `sessionId`. On the server,
+`AgonesLifecycle` records `ObjectMeta.Name` when the watch reports
+`Allocated`, and `SessionHeartbeat` waits for it instead of `SESSION_ID`.
 
 - A **warm, unallocated** server has no session row yet, and Phase 0 made
-  heartbeats for unknown sessions return 404. The server should only start
-  heartbeating once it's `Allocated`.
-- Under Agones the cap is the Fleet's `maxReplicas` (Phase 3), so
-  `active_session_count` isn't used on this path.
+  heartbeats for unknown sessions return 404, so heartbeats only start once
+  it's `Allocated`.
+- The row is written `status: allocated`, which `find_joinable_session`
+  ignores, until the first heartbeat replaces it with the server's own status.
+  The watch can report `Allocated` before the matchmaker has written the row,
+  so the very first heartbeat may 404; the next one, 10s later, lands.
+- The pod needs `MATCHMAKER_URL` and `MATCHMAKER_KEY`
+  (`infrastructure/k8s/fleet.yaml`). Locally that's `serve_local.py` at the
+  node's address, started with `--host 0.0.0.0` — a pod's `127.0.0.1` is its
+  own.
+- Under Agones the cap is the Fleet's size (`maxReplicas` in Phase 3), so
+  `agones.has_capacity()` is always true and `active_session_count` counts
+  only Fargate rows.
 
 ### 5. Session end — decide
 
