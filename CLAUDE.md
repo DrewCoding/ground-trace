@@ -92,10 +92,16 @@ Inside `mm/`, imports flow one way: `tickets` → `matching` → `claims`,
 acyclic.
 
 `mm/backends/` is the compute seam: a backend is a module exposing
-`provision() -> session_id` and `resolve_address(session) -> (ip, port) | None`,
-selected by the `ORCHESTRATOR` env var (default `fargate`; an unknown value
-fails the cold start). It exists for the planned Agones backend — see
-`docs/agones-research.md`.
+`has_capacity() -> bool`, `provision() -> session_id | None` (None = no server
+right now, players are released for the next poll) and
+`resolve_address(session) -> (ip, port) | None`, selected by the
+`ORCHESTRATOR` env var (default `fargate`; an unknown value fails the cold
+start). Only the selected backend is imported, because each reads its own
+required env vars at import. `fargate.py` launches a task per match;
+`agones.py` allocates from a Fleet's warm pool over REST with mTLS — see
+`docs/phase-2.md` for the allocator's response codes and why the cluster runs
+our own allocator certificates. Session rows carry `orchestrator`, and the
+Fargate cap counts only Fargate rows, since nothing deletes Agones rows.
 
 State lives in two DynamoDB tables: `queue` (tickets) and `sessions`
 (servers), each with a `status`-keyed GSI and TTL on `expiresAt`.
