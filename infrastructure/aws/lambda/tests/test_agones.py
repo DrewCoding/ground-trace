@@ -14,7 +14,7 @@ from mm.responses import MatchmakerError
 
 from conftest import (
     ALLOCATED_IP, all_sessions, emitted_metrics, fill_capacity, get_session,
-    get_ticket, join, poll, put_session,
+    get_ticket, heartbeat, join, poll, put_session,
 )
 
 
@@ -135,16 +135,36 @@ def test_leftover_agones_rows_do_not_cap_fargate(ecs):
     assert len(ecs.run_calls) == 1
 
 
-def test_lone_player_is_not_backfilled_into_an_allocated_server(agones):
+def test_lone_player_is_not_backfilled_before_the_server_reports(agones):
     join()
     join()
     _, c = join()
 
-    # Under Agones the server doesn't heartbeat, so its playerCount is never
-    # updated; offering it would send a third player into a full 1v1.
+    # Until the server's first heartbeat, its playerCount is the matchmaker's
+    # guess. Offering it would send a third player into what may be a full 1v1.
     _, body = poll(c["ticketId"])
 
     assert body == {"status": "waiting"}
+    assert len(agones.requests) == 1
+
+
+def test_lone_player_is_backfilled_once_the_server_reports_a_free_slot(agones):
+    _, a = join()
+    join()
+    session_id = get_ticket(a["ticketId"])["sessionId"]
+
+    # One player left; the server's heartbeat, sent under its GameServer
+    # name, says so.
+    status, _ = heartbeat(session_id, {"status": "waiting", "playerCount": 1})
+    assert status == 200
+
+    _, c = join()
+    _, body = poll(c["ticketId"])
+
+    # Through the same find_joinable_session path Fargate uses - no second
+    # allocation.
+    assert body["status"] == "matched"
+    assert body["sessionId"] == session_id
     assert len(agones.requests) == 1
 
 

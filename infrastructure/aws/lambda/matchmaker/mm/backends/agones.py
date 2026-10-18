@@ -129,10 +129,12 @@ def provision():
     sessions.create({
         "sessionId": session_id,
         "orchestrator": "agones",
-        # Not "waiting": find_joinable_session would offer it for backfill on
-        # the strength of a playerCount nothing updates, because the Unity
-        # server doesn't heartbeat under Agones. Backfill on this path belongs
-        # to the allocator's own selectors instead.
+        # Not "waiting" until the server says so. Once allocated, its
+        # SessionHeartbeat starts reporting under this name, and the first
+        # report replaces this with its real status and playerCount - from
+        # then on the shared find_joinable_session backfills it exactly as it
+        # does a Fargate server. Before that, the 0 players here are a guess
+        # nothing has confirmed, and offering it would be backfill on faith.
         "status": "allocated",
         "createdAt": now,
         "lastHeartbeat": now,
