@@ -1,0 +1,33 @@
+# Local k3s Fleet for Phase 1 (docs/phase-1.md, Part E). Phase 3 replaces
+# this with a Helm chart.
+apiVersion: agones.dev/v1
+kind: Fleet
+metadata:
+  name: ground-trace
+spec:
+  replicas: 1
+  template:
+    spec:
+      ports:
+        - name: default
+          portPolicy: Dynamic      # random host port in 7000-8000
+          containerPort: 7777      # what NetworkBootstrapUI listens on (GAME_PORT)
+          protocol: UDP
+      health:
+        # Default is 5s. A Unity server takes a few seconds to boot before it
+        # can send its first health ping; don't let a slow start read as dead.
+        initialDelaySeconds: 30
+      template:
+        spec:
+          containers:
+            - name: game-server
+              # Imported with `k3s ctr images import`, not pushed anywhere.
+              # A new tag per build: :latest makes Kubernetes always pull,
+              # which fails with ErrImagePull even though the image is local.
+              image: game-server:dev2
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: ORCHESTRATOR
+                  value: agones
+                - name: EMPTY_SHUTDOWN_SECONDS
+                  value: "60"

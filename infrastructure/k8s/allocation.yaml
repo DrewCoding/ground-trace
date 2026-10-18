@@ -1,0 +1,8 @@
+# Allocate one Ready server from the Fleet by hand. Use `kubectl create`,
+# not apply: each create is a new allocation request.
+apiVersion: allocation.agones.dev/v1
+kind: GameServerAllocation
+spec:
+  selectors:
+    - matchLabels:
+        agones.dev/fleet: ground-trace
