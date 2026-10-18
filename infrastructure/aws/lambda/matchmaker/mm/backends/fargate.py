@@ -22,6 +22,10 @@ ecs = boto3.client("ecs")
 ec2 = boto3.client("ec2")
 
 
+def has_capacity():
+    return sessions.active_session_count() < config.MAX_CONCURRENT_SESSIONS
+
+
 def provision():
     session_id = str(uuid.uuid4())
 
@@ -59,6 +63,7 @@ def provision():
 
     sessions.create({
         "sessionId": session_id,
+        "orchestrator": "fargate",
         "status": "provisioning",
         "createdAt": now,
         "lastHeartbeat": now,
