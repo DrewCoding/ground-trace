@@ -196,8 +196,11 @@ Pass per-event values (`sessionId`, `taskArn`, `stopCode`) as `emit_metric`
 keyword properties, never as dimensions: each unique dimension combination is
 a separately billed CloudWatch metric. Adding a dimension to an existing
 metric also changes its identity, so dashboard widgets querying it without
-that dimension go blank — the planned `Orchestrator` dimension has to land
-together with a dashboard update.
+that dimension go blank. That's why every data point is emitted with two
+dimension sets, `[[], ["Orchestrator"]]`: the undimensioned copy is what
+`dashboard.tf` and the alarms query, and the `Orchestrator` copy (fargate or
+agones, from `config.ORCHESTRATOR`) is for comparing backends. Don't drop the
+`[]` set.
 
 ## Working in this codebase
 

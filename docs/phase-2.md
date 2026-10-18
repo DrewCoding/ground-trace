@@ -166,12 +166,18 @@ Probably both: delete on clean shutdown, staleness for crashes.
 
 ### 6. Toggle and metrics
 
-- Add `ORCHESTRATOR` as a Terraform variable, default `fargate`.
-- Add the `Orchestrator` metric dimension, **together with** the dashboard
-  update — a new dimension changes each metric's identity and blanks widgets
-  that query it without one (see CLAUDE.md).
-- New metrics: `WarmPoolExhausted`, and allocation latency as the Agones
-  counterpart to `ProvisionDurationSeconds`.
+- **Done:** `ORCHESTRATOR` Terraform variable, default `fargate`, validated to
+  `fargate|agones`.
+- **Done, without a dashboard change:** the `Orchestrator` dimension. Adding a
+  dimension changes a metric's identity and would blank every widget and alarm
+  querying it without one — so instead each data point is emitted with two
+  EMF dimension sets, `[[], ["Orchestrator"]]`. The undimensioned metric the
+  dashboard reads is unchanged; the per-orchestrator copy is new.
+- **Done:** `WarmPoolExhausted`, `AllocationContention`, and
+  `AllocationDurationSeconds` (the Agones counterpart to
+  `ProvisionDurationSeconds`). They aren't on the dashboard yet: the deployed
+  stack doesn't run Agones until Phase 5, so widgets for them belong with the
+  Phase 6 comparison.
 
 ### 7. Test
 
