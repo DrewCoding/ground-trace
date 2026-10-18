@@ -6,12 +6,17 @@ from an Agones Fleet instead of launching a Fargate task — selected by
 
 **Done when:**
 
-- [ ] With `ORCHESTRATOR=agones`, two queued players get the address of an
+- [x] With `ORCHESTRATOR=agones`, two queued players get the address of an
       already-`Ready` server on the poll after matching — no `provisioning` wait
-- [ ] An empty warm pool leaves players queued, and they're matched on a later
-      poll once a server is `Ready`
+      (Unity clients through `serve_local.py`, 2026-10-17)
+- [x] An empty warm pool leaves players queued, and they're matched on a later
+      poll once a server is `Ready` (tests; the real allocator's 429 was seen
+      leaving players waiting through `serve_local.py`)
 - [ ] A lone player is backfilled into an allocated server with a free slot
-- [ ] Both backends pass the same pytest suite; Fargate stays the default
+      (covered by `test_agones.py`; needs the heartbeat-enabled server image
+      to confirm in the real game)
+- [x] Both backends pass the pytest suite; Fargate stays the default. The
+      Agones tests are their own file rather than the same suite run twice
 
 **Depends on:** Phase 0 (the backend seam). The end-to-end test needs Phase 1's
 cluster.
@@ -152,17 +157,28 @@ allocation's `gameServerName` as the `sessionId`. On the server,
   `agones.has_capacity()` is always true and `active_session_count` counts
   only Fargate rows.
 
-### 5. Session end — decide
+### 5. Session end — decided: staleness, with TTL as garbage collection
 
 On Fargate, `ecs_events` deletes the row when the task stops. Agones has no
-equivalent signal reaching AWS. Options:
+equivalent signal reaching AWS. Options considered:
 
 | Option | Trade-off |
 |---|---|
 | Server calls `DELETE /sessions/{id}`, then `Shutdown()` | Reliable here, unlike Fargate: the server controls when it shuts down and can await the request first. Rows from crashed servers still linger |
 | Rely on heartbeat staleness, TTL as garbage collection | No new code. Rows linger on the dashboard; harmless to matching, since nothing counts them on this path |
 
-Probably both: delete on clean shutdown, staleness for crashes.
+**Decision (2026-10-17): staleness only — no new code.** With heartbeats
+feeding backfill (step 3), an ended server's row stops being refreshed and is
+stale within `SESSION_STALE_SECONDS` (45s), so `find_joinable_session` never
+offers it. Nothing counts Agones rows either: the Fargate cap skips them and
+the Agones cap is the Fleet's size. The only visible effect is ended sessions
+lingering on the dashboard, flagged stale, until TTL removes them.
+
+Deleting on clean shutdown was rejected because it would reverse a deliberate
+rule (CLAUDE.md: the game server never deregisters, and end-of-session logic
+doesn't belong in `deregister`) for a cosmetic gain, and it would still leave
+crashed servers to staleness. If the dashboard noise matters later, filter
+stale Agones rows out of `dashboard_snapshot` rather than adding a delete.
 
 ### 6. Toggle and metrics
 
