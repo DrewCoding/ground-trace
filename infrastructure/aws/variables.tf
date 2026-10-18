@@ -68,3 +68,19 @@ variable "max_concurrent_sessions" {
     type = number
     default = 4
 }
+
+variable "orchestrator" {
+    type = string
+    default = "fargate"
+    description = <<-EOT
+      Which backend the matchmaker gets game servers from: fargate or agones.
+      agones also needs the AGONES_* allocator settings and certificates,
+      which aren't wired into the Lambda until there is a cluster it can
+      reach (Phase 5) - setting it here before then fails every cold start.
+    EOT
+
+    validation {
+        condition = contains(["fargate", "agones"], var.orchestrator)
+        error_message = "orchestrator must be fargate or agones."
+    }
+}

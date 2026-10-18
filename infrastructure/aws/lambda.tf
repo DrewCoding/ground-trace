@@ -40,6 +40,7 @@ resource "aws_lambda_function" "matchmaker" {
           GAME_PORT = tostring(var.game_server_port)
           API_KEY = var.matchmaker_api_key
           MAX_CONCURRENT_SESSIONS = tostring(var.max_concurrent_sessions)
+          ORCHESTRATOR = var.orchestrator
         }
     }
 }
