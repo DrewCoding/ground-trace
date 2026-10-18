@@ -157,12 +157,14 @@ class FakeAllocator:
 @pytest.fixture
 def agones(monkeypatch):
     """Switch the matchmaker to the Agones backend, with a fake allocator."""
-    from mm import backends
+    from mm import backends, config
     from mm.backends import agones as agones_backend
 
     fake = FakeAllocator()
     monkeypatch.setattr(agones_backend, "allocator", fake)
     monkeypatch.setattr(backends, "active", agones_backend)
+    # What a real ORCHESTRATOR=agones deploy would label its metrics with.
+    monkeypatch.setattr(config, "ORCHESTRATOR", "agones")
     return fake
 
 
