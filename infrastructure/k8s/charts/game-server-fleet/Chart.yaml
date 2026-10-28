@@ -1,0 +1,5 @@
+apiVersion: v2
+name: game-server-fleet
+description: The ground-trace Unity server as an Agones Fleet, with a warm-pool autoscaler.
+type: application
+version: 0.1.0

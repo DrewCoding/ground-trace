@@ -1,0 +1,64 @@
+# Defaults shared by every environment. values-local.yaml and values-eks.yaml
+# hold what differs between them.
+
+# The matchmaker allocates by this name (AGONES_FLEET, default ground-trace).
+name: ground-trace
+
+image:
+  repository: game-server
+  # Required, and a new one for every build. Changing it is what a deploy is
+  # (Phase 4). Never latest - see templates/fleet.yaml.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Stamped on every GameServer as the ground-trace/build label. Defaults to
+# image.tag. Allocation can then select servers of one build, so a client is
+# never matched to a server Netcode will reject - the 2026-10-16 mismatch.
+buildVersion: ""
+
+port:
+  # What NetworkBootstrapUI listens on (GAME_PORT). Under Dynamic only the
+  # host port varies, so the server never needs to learn it.
+  container: 7777
+  policy: Dynamic
+
+health:
+  # Agones' default is 5s. A Unity server takes a few seconds to boot before
+  # its first health ping; a slow start shouldn't read as dead.
+  initialDelaySeconds: 30
+
+# Passed as EMPTY_SHUTDOWN_SECONDS. Under Agones the timer starts at
+# allocation, not boot (AgonesLifecycle), so warm servers aren't affected.
+emptyShutdownSeconds: 60
+
+# Where SessionHeartbeat reports once a server is allocated - what lets the
+# matchmaker backfill into it. Leave url empty to run without heartbeats.
+matchmaker:
+  url: ""
+  # The API key comes from a Secret created outside the chart, never from a
+  # value: with GitOps (Phase 4), anything in the repo gets deployed.
+  keySecret:
+    name: ""
+    key: key
+
+# The warm pool. Agones re-evaluates it every 30s.
+autoscaler:
+  enabled: true
+  # Servers kept Ready ahead of demand. Each is idle capacity being paid for
+  # (node space on EKS). Agones rejects 0, and the autoscaler targets
+  # allocated + bufferSize, so a Buffer policy never scales to zero whatever
+  # minReplicas says - only a webhook policy can (docs/phase-3.md).
+  bufferSize: 1
+  # Accepted as 0, but never the binding limit while bufferSize >= 1.
+  minReplicas: 0
+  # The spending ceiling on this path, in place of MAX_CONCURRENT_SESSIONS.
+  # Treat it as the same security control: the matchmaker's API key is
+  # extractable from the game client, and this is what bounds the cost of
+  # someone spamming joins with it.
+  maxReplicas: 3
+
+# Only used with the autoscaler disabled. With it enabled the Fleet's replica
+# count belongs to the autoscaler.
+replicas: 1
+
+resources: {}

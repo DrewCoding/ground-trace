@@ -1,0 +1,63 @@
+{{- $tag := required "image.tag is required - one tag per build" .Values.image.tag -}}
+{{- if eq $tag "latest" -}}
+{{- /* Kubernetes always pulls :latest, ignoring IfNotPresent. Locally the
+       image is imported, not in any registry, so every server fails with
+       ErrImagePull; on EKS two nodes could run different builds. */ -}}
+{{- fail "image.tag must not be latest - use a tag per build" -}}
+{{- end -}}
+{{- if and .Values.matchmaker.url (not .Values.matchmaker.keySecret.name) -}}
+{{- /* Without a key, SessionHeartbeat switches itself off, and the
+       matchmaker silently never backfills into these servers. */ -}}
+{{- fail "matchmaker.url is set but matchmaker.keySecret.name is not" -}}
+{{- end -}}
+apiVersion: agones.dev/v1
+kind: Fleet
+metadata:
+  name: {{ .Values.name }}
+  labels:
+    {{- include "game-server-fleet.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaler.enabled }}
+  replicas: {{ .Values.replicas }}
+  {{- end }}
+  {{- /* With the autoscaler on, replicas is left out on purpose. If the
+         chart set it, every upgrade would reset the Fleet to that number
+         and fight the autoscaler until its next 30s evaluation. */}}
+  template:
+    metadata:
+      labels:
+        ground-trace/build: {{ include "game-server-fleet.buildVersion" . | quote }}
+    spec:
+      ports:
+        - name: default
+          portPolicy: {{ .Values.port.policy }}
+          containerPort: {{ .Values.port.container }}
+          protocol: UDP
+      health:
+        initialDelaySeconds: {{ .Values.health.initialDelaySeconds }}
+      template:
+        spec:
+          containers:
+            - name: game-server
+              image: "{{ .Values.image.repository }}:{{ $tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              env:
+                # What AgonesLifecycle checks before it touches the SDK, so
+                # the same image still runs on Fargate.
+                - name: ORCHESTRATOR
+                  value: agones
+                - name: EMPTY_SHUTDOWN_SECONDS
+                  value: {{ .Values.emptyShutdownSeconds | quote }}
+                {{- with .Values.matchmaker.url }}
+                - name: MATCHMAKER_URL
+                  value: {{ . | quote }}
+                - name: MATCHMAKER_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $.Values.matchmaker.keySecret.name }}
+                      key: {{ $.Values.matchmaker.keySecret.key }}
+                {{- end }}
+              {{- with .Values.resources }}
+              resources:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
