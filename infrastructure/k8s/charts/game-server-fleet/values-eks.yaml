@@ -1,0 +1,22 @@
+# EKS (Phase 5). Not deployed anywhere yet - the placeholders below are
+# filled in when that cluster exists.
+
+image:
+  # ECR, the same repository the Fargate task definition pulls from, so both
+  # paths always run the same build (docs/phase-4.md).
+  repository: ACCOUNT.dkr.ecr.us-west-1.amazonaws.com/ground-trace-game-server
+  tag: ""   # set per deploy by the pipeline (Phase 4)
+
+matchmaker:
+  # terraform output matchmaker_api_url
+  url: ""
+  keySecret:
+    # Synced from Secrets Manager by External Secrets, not created by hand.
+    name: matchmaker-key
+
+autoscaler:
+  # Warm pool for the measurement window. maxReplicas matches the Fargate
+  # path's MAX_CONCURRENT_SESSIONS (4), so the comparison runs both paths
+  # under the same ceiling.
+  bufferSize: 2
+  maxReplicas: 4

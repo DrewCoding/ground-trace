@@ -1,0 +1,26 @@
+# Agones install settings for EKS (Phase 5). Not yet installed anywhere -
+# values here follow docs/phase-5.md and get checked when that cluster exists.
+agones:
+  ping:
+    install: false
+
+  # Default replica counts: unlike the single local node, a multi-node
+  # cluster gets real availability from them.
+
+  # Agones' system pods prefer nodes labelled agones.dev/agones-system=true
+  # and tolerate that taint by default. Requiring it keeps them off the game
+  # server nodes, where they'd compete with matches for CPU. Phase 5 creates
+  # the labelled, tainted system node group.
+  requireDedicatedNodes: true
+
+  allocator:
+    # Same reasons as values-local.yaml. The server certificate must name
+    # the allocator's load balancer hostname - reissue it from the same CA
+    # (docs/phase-2.md) so the matchmaker's trusted CA doesn't change.
+    generateTLS: false
+    generateClientTLS: false
+
+# Must match the game server security group's UDP rule.
+gameservers:
+  minPort: 7000
+  maxPort: 8000
