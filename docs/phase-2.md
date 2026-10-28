@@ -149,8 +149,8 @@ allocation's `gameServerName` as the `sessionId`. On the server,
   ignores, until the first heartbeat replaces it with the server's own status.
   The watch can report `Allocated` before the matchmaker has written the row,
   so the very first heartbeat may 404; the next one, 10s later, lands.
-- The pod needs `MATCHMAKER_URL` and `MATCHMAKER_KEY`
-  (`infrastructure/k8s/fleet.yaml`). Locally that's `serve_local.py` at the
+- The pod needs `MATCHMAKER_URL` and `MATCHMAKER_KEY` (the Fleet chart's
+  `matchmaker.url` and `matchmaker.keySecret`, Phase 3). Locally that's `serve_local.py` at the
   node's address, started with `--host 0.0.0.0` — a pod's `127.0.0.1` is its
   own.
 - Under Agones the cap is the Fleet's size (`maxReplicas` in Phase 3), so

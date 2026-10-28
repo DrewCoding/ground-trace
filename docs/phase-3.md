@@ -6,10 +6,31 @@ for the local cluster and EKS, and the thing Argo CD deploys in Phase 4.
 
 **Done when:**
 
-- [ ] `helm install` of the chart reproduces Phase 1's Fleet on k3s
-- [ ] A buffer autoscaler keeps a warm pool at the configured size
-- [ ] Switching between local and EKS is a values file, not an edit
-- [ ] Nothing secret is in the repo
+- [x] `helm install` of the chart reproduces Phase 1's Fleet on k3s
+      (2026-10-17: Ready in 7s, labelled `ground-trace/build=dev2`, matchmaker
+      key read from the `matchmaker-key` Secret)
+- [x] A buffer autoscaler keeps a warm pool at the configured size (allocating
+      the only Ready server brought up a replacement in 17s)
+- [~] Switching between local and EKS is a values file, not an edit —
+      `values-eks.yaml` exists for both charts, with placeholders until Phase 5
+      gives it a cluster to be checked against
+- [x] Nothing secret is in the repo. The allocator's certificates are passed
+      from `~/.ground-trace/allocator/` by `scripts/install-agones-local.sh`;
+      the matchmaker key is a Secret created out of band. (`local-dev-key`
+      appears in the local values comments: it only opens `serve_local.py` on
+      this machine.)
+
+**Installing locally:**
+
+```bash
+bash scripts/install-agones-local.sh        # Agones, with values-local.yaml + certs
+kubectl create secret generic matchmaker-key --from-literal=key=local-dev-key
+helm upgrade --install game-server-fleet infrastructure/k8s/charts/game-server-fleet \
+  -f infrastructure/k8s/charts/game-server-fleet/values-local.yaml
+```
+
+The Phase 1 Fleet was made with `kubectl apply`, and Helm won't adopt a
+resource it didn't create, so it was deleted before the first chart install.
 
 **Depends on:** Phase 1 (a Fleet that works, to package).
 
@@ -105,5 +126,8 @@ Server-side dry run catches schema errors against the real Agones CRDs.
 
 ## Open questions
 
-- Buffer policy with `minReplicas: 0` — the docs only state webhook
-  autoscalers can scale to zero; untested whether buffer accepts it.
+- ~~Buffer policy with `minReplicas: 0`~~ — answered by server-side dry run
+  against Agones 1.61: `minReplicas: 0` is **accepted**, but it doesn't make a
+  Buffer Fleet scale to zero. `bufferSize: 0` is rejected, and the autoscaler
+  targets `allocated + bufferSize`, so at least `bufferSize` servers are
+  always Ready. Scale-to-zero on Agones still means a webhook autoscaler.
