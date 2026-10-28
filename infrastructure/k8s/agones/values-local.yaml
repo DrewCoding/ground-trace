@@ -1,0 +1,33 @@
+# Agones install settings for the local k3s cluster. Install with
+# scripts/install-agones-local.sh, not helm directly: the allocator's
+# certificates are passed from outside the repo, and leaving them out has a
+# silent failure mode (see the script).
+agones:
+  # Player latency measurement for multi-region placement. One local cluster
+  # has nothing to choose between.
+  ping:
+    install: false
+
+  # One of each instead of 2/2/3. On a single node extra replicas add no
+  # availability, and the controller and extensions each reserve ~10GB of
+  # ephemeral storage - two of each nearly filled the 44GB root disk.
+  controller:
+    replicas: 1
+  extensions:
+    replicas: 1
+
+  allocator:
+    replicas: 1
+    # Our own certificates instead of the chart's. The generated server cert
+    # has no subject or SAN, which Python's default TLS rejects, and the
+    # chart regenerates every cert on each upgrade, breaking any matchmaker
+    # that pinned them (docs/phase-2.md, step 1). tlsCert, tlsKey and
+    # clientCAs are supplied with --set-file by the install script.
+    generateTLS: false
+    generateClientTLS: false
+
+# Host ports handed to game servers. Must match what the firewall allows
+# (docs/phase-1.md, A2: ufw allow 7000:8000/udp).
+gameservers:
+  minPort: 7000
+  maxPort: 8000
