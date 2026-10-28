@@ -1,0 +1,16 @@
+{{- if .Values.autoscaler.enabled }}
+apiVersion: autoscaling.agones.dev/v1
+kind: FleetAutoscaler
+metadata:
+  name: {{ .Values.name }}
+  labels:
+    {{- include "game-server-fleet.labels" . | nindent 4 }}
+spec:
+  fleetName: {{ .Values.name }}
+  policy:
+    type: Buffer
+    buffer:
+      bufferSize: {{ .Values.autoscaler.bufferSize }}
+      minReplicas: {{ .Values.autoscaler.minReplicas }}
+      maxReplicas: {{ .Values.autoscaler.maxReplicas }}
+{{- end }}
