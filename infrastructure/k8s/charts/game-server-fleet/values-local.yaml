@@ -1,0 +1,26 @@
+# The local k3s cluster (docs/phase-1.md). Before installing, create the
+# matchmaker key Secret - it's deliberately not part of the chart:
+#
+#   kubectl create secret generic matchmaker-key --from-literal=key=local-dev-key
+#
+#   helm upgrade --install game-server-fleet infrastructure/k8s/charts/game-server-fleet \
+#     -f infrastructure/k8s/charts/game-server-fleet/values-local.yaml
+
+image:
+  # Imported into k3s with `k3s ctr images import` (docs/phase-1.md, Part D),
+  # not pushed anywhere - hence the bare name and IfNotPresent.
+  repository: game-server
+  tag: dev2
+
+matchmaker:
+  # serve_local.py on the node, started with --host 0.0.0.0. A pod's
+  # 127.0.0.1 is its own, not the node's.
+  url: http://10.0.0.55:8080
+  keySecret:
+    name: matchmaker-key
+
+autoscaler:
+  # One warm server, at most three matches at once. Sized for one 15GB box
+  # that also runs the editor, the clients and Docker builds.
+  bufferSize: 1
+  maxReplicas: 3
