@@ -2,10 +2,10 @@ name: Terraform
 
 on:
   pull_request:
-    paths: ["infrastructure/**"]
+    paths: ["infrastructure/aws/**"]
   push:
     branches: [main]
-    paths: ["infrastructure/**"]
+    paths: ["infrastructure/aws/**"]
   workflow_dispatch:
 
 # id-token: write is what lets the job request an OIDC token. Without it the
