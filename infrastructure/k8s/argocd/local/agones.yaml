@@ -1,0 +1,37 @@
+# Agones itself: the upstream chart, with this repo's values file. Two
+# sources because the chart and its values live in different repositories;
+# $values refers to the second one.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agones
+  namespace: argocd
+  # Deliberately no resources-finalizer: deleting this Application must never
+  # cascade into deleting Agones and every GameServer it runs.
+spec:
+  project: default
+  sources:
+    - repoURL: https://agones.dev/chart/stable
+      chart: agones
+      targetRevision: 1.61.0
+      helm:
+        # Resource names derive from it (the agones-cert Secret the bootstrap
+        # creates, for one). Left unset, it would be the Application name -
+        # the same today, but not something to depend on.
+        releaseName: agones
+        valueFiles:
+          - $values/infrastructure/k8s/agones/values-local.yaml
+    - repoURL: https://github.com/DrewCoding/ground-trace.git
+      targetRevision: phase-0-matchmaker-fixes
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: agones-system
+  syncPolicy:
+    # Manual: an Agones upgrade changes CRDs, which deserves a look at the
+    # diff before it's applied, and nothing about it is urgent.
+    syncOptions:
+      # Agones' CRDs are big enough that client-side apply's
+      # last-applied-configuration annotation can exceed Kubernetes' size limit.
+      - ServerSideApply=true
+      - CreateNamespace=true

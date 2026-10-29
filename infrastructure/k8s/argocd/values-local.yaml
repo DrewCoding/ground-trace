@@ -1,0 +1,18 @@
+# Argo CD on the local k3s cluster. Installed once by scripts/bootstrap-local.sh;
+# from then on it deploys everything else from git, and this is the one thing
+# installed by hand. Self-hosted rather than EKS's managed Argo CD, which is
+# billed hourly (docs/phase-4.md).
+
+# SSO. One operator using the built-in admin account doesn't need it.
+dex:
+  enabled: false
+
+# Slack/email alerts on sync events - nothing to send them to.
+notifications:
+  enabled: false
+
+configs:
+  params:
+    # The UI is only reached through `kubectl port-forward` on this machine.
+    # TLS there adds a certificate warning and no protection.
+    server.insecure: true

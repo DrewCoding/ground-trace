@@ -1,0 +1,28 @@
+# The game server Fleet and its warm-pool autoscaler. Synced automatically:
+# a commit that changes image.tag in values-local.yaml is a deploy. Agones
+# rolls Ready servers onto the new build and leaves Allocated ones alone until
+# their match ends, so a deploy never drops a game in progress.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: game-server-fleet
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/DrewCoding/ground-trace.git
+    targetRevision: phase-0-matchmaker-fixes
+    path: infrastructure/k8s/charts/game-server-fleet
+    helm:
+      releaseName: game-server-fleet
+      valueFiles:
+        - values-local.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      # Reverts hand edits to the Fleet. The replica count isn't one of them:
+      # the chart leaves it out so it stays the autoscaler's to set.
+      selfHeal: true

@@ -1,0 +1,28 @@
+# The root of the local cluster's app-of-apps. Applied once by
+# scripts/bootstrap-local.sh; after that, adding or changing an Application
+# under local/ is a git commit.
+#
+# Tracks phase-0-matchmaker-fixes, where the Agones work lives - main doesn't
+# have it yet. Switching to main is the targetRevision here plus the same line
+# in each Application under local/.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-local
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/DrewCoding/ground-trace.git
+    targetRevision: phase-0-matchmaker-fixes
+    path: infrastructure/k8s/argocd/local
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    # Prune is safe here because the child Applications carry no
+    # resources-finalizer: removing one from git deletes the Application
+    # object, not the Agones install or the game servers it managed.
+    automated:
+      prune: true
+      selfHeal: true
