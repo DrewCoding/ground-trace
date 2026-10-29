@@ -1,28 +1,49 @@
-# Agones install settings for the local k3s cluster. Install with
-# scripts/install-agones-local.sh, not helm directly: the allocator's
-# certificates are passed from outside the repo, and leaving them out has a
-# silent failure mode (see the script).
+# Agones install settings for the local k3s cluster, deployed by Argo CD
+# (infrastructure/k8s/argocd/local/agones.yaml).
+
 agones:
   # Player latency measurement for multi-region placement. One local cluster
   # has nothing to choose between.
   ping:
     install: false
 
+  crds:
+    # The pre-delete hook that deletes Agones' CRDs on uninstall would take
+    # every GameServer with them. Removing Agones should be a deliberate act,
+    # not a side effect of deleting an Argo CD Application.
+    cleanupOnDelete: false
+
   # One of each instead of 2/2/3. On a single node extra replicas add no
   # availability, and the controller and extensions each reserve ~10GB of
   # ephemeral storage - two of each nearly filled the 44GB root disk.
   controller:
     replicas: 1
+    # PUBLIC CERTIFICATE \/\/\/\/\/\/
+    generateTLS: false
+    disableSecret: true
+    tlsCert: |
+      -----BEGIN CERTIFICATE-----
+      MIICPjCCAeOgAwIBAgIUFlsOv4FjK8zSiqjS+h8VVBbOecEwCgYIKoZIzj0EAwIw
+      JDEiMCAGA1UEAwwZYWdvbmVzLWNvbnRyb2xsZXItc2VydmljZTAeFw0yNjEwMjgy
+      MzA2MjNaFw0zMTEwMjcyMzA2MjNaMCQxIjAgBgNVBAMMGWFnb25lcy1jb250cm9s
+      bGVyLXNlcnZpY2UwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARwMCwaLX4XLDo7
+      gY65LOR1qd0U8+AU/CLLsKj03KN5t7JPNWPo8uqE6bjDC67HyWTXjCM5qloqqz/M
+      UnRJUjNEo4HyMIHvMB0GA1UdDgQWBBTFhhNL8Wwn6tkZQchmA8eSdnz/xTAfBgNV
+      HSMEGDAWgBTFhhNL8Wwn6tkZQchmA8eSdnz/xTB6BgNVHREEczBxghlhZ29uZXMt
+      Y29udHJvbGxlci1zZXJ2aWNlgidhZ29uZXMtY29udHJvbGxlci1zZXJ2aWNlLmFn
+      b25lcy1zeXN0ZW2CK2Fnb25lcy1jb250cm9sbGVyLXNlcnZpY2UuYWdvbmVzLXN5
+      c3RlbS5zdmMwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAww
+      CgYIKwYBBQUHAwEwCgYIKoZIzj0EAwIDSQAwRgIhAN7hUCWV37EYJ3sP2k0kCUx8
+      TbSQzd01SqtfwmfUrULnAiEA81TEzYq7DvCngST8Wacs4MH5VO/TTXeP0z69Wnkj
+      rHQ=
+      -----END CERTIFICATE-----
   extensions:
     replicas: 1
 
   allocator:
     replicas: 1
-    # Our own certificates instead of the chart's. The generated server cert
-    # has no subject or SAN, which Python's default TLS rejects, and the
-    # chart regenerates every cert on each upgrade, breaking any matchmaker
-    # that pinned them (docs/phase-2.md, step 1). tlsCert, tlsKey and
-    # clientCAs are supplied with --set-file by the install script.
+
+    disableSecretCreation: true
     generateTLS: false
     generateClientTLS: false
 
