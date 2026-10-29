@@ -14,20 +14,15 @@ for the local cluster and EKS, and the thing Argo CD deploys in Phase 4.
 - [~] Switching between local and EKS is a values file, not an edit —
       `values-eks.yaml` exists for both charts, with placeholders until Phase 5
       gives it a cluster to be checked against
-- [x] Nothing secret is in the repo. The allocator's certificates are passed
-      from `~/.ground-trace/allocator/` by `scripts/install-agones-local.sh`;
-      the matchmaker key is a Secret created out of band. (`local-dev-key`
-      appears in the local values comments: it only opens `serve_local.py` on
-      this machine.)
+- [x] Nothing secret is in the repo. Private keys live in `~/.ground-trace/`
+      and become Secrets created out of band, as does the matchmaker key.
+      (`local-dev-key` appears in the local values comments: it only opens
+      `serve_local.py` on this machine.)
 
-**Installing locally:**
-
-```bash
-bash scripts/install-agones-local.sh        # Agones, with values-local.yaml + certs
-kubectl create secret generic matchmaker-key --from-literal=key=local-dev-key
-helm upgrade --install game-server-fleet infrastructure/k8s/charts/game-server-fleet \
-  -f infrastructure/k8s/charts/game-server-fleet/values-local.yaml
-```
+**Installing:** both charts are deployed by Argo CD since Phase 4 —
+`scripts/bootstrap-local.sh`, then see docs/phase-4.md. Phase 3 installed
+them with `helm` directly; that path is gone, because Helm and Argo CD
+managing the same resources would fight.
 
 The Phase 1 Fleet was made with `kubectl apply`, and Helm won't adopt a
 resource it didn't create, so it was deleted before the first chart install.
