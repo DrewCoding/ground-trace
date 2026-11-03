@@ -74,13 +74,22 @@ variable "orchestrator" {
     default = "fargate"
     description = <<-EOT
       Which backend the matchmaker gets game servers from: fargate or agones.
-      agones also needs the AGONES_* allocator settings and certificates,
-      which aren't wired into the Lambda until there is a cluster it can
-      reach (Phase 5) - setting it here before then fails every cold start.
+      agones also needs agones_allocator_url, and the allocator certificates
+      uploaded with scripts/put-allocator-tls.sh (docs/phase-5.md).
     EOT
 
     validation {
         condition = contains(["fargate", "agones"], var.orchestrator)
         error_message = "orchestrator must be fargate or agones."
     }
+}
+
+variable "agones_allocator_url" {
+    type = string
+    default = ""
+    description = <<-EOT
+      The EKS allocator's https:// address, printed by the EKS bootstrap. It
+      changes every measurement window, since each one gets a new load
+      balancer. Only read when orchestrator is agones.
+    EOT
 }

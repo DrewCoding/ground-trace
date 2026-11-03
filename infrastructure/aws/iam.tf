@@ -95,6 +95,15 @@ data "aws_iam_policy_document" "matchmaker" {
         actions = ["ec2:DescribeNetworkInterfaces"]
         resources = ["*"]
     }
+
+    statement {
+        sid = "ReadAllocatorTls"
+        effect = "Allow"
+        actions = ["ssm:GetParameter"]
+        resources = [
+            "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.agones_tls_parameter}",
+        ]
+    }
 }
 
 resource "aws_iam_role_policy" "matchmaker" {

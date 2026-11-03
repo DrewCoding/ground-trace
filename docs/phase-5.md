@@ -62,9 +62,21 @@ Two managed node groups:
 - Security group: UDP 7000–8000 inbound, matching the Agones port range.
 - The allocator is exposed through a LoadBalancer Service. The Lambda runs
   outside the VPC and has no fixed egress IP, so the allocator is reachable
-  from the internet and **mTLS is the access control** — the client cert in
-  Secrets Manager from Phase 2.
-- Matchmaker IAM: `secretsmanager:GetSecretValue` on that secret.
+  from the internet and **mTLS is the access control**.
+- **The matchmaker's client certificate** (Phase 2's CA, client cert and key)
+  is one SSM Parameter Store SecureString, `/ground-trace/agones/allocator-tls`,
+  uploaded once with `scripts/put-allocator-tls.sh`. Parameter Store rather
+  than Secrets Manager: the standard tier is free, while a secret costs $0.40
+  a month even with no cluster. It's not a Terraform resource, because
+  Terraform would keep the private key in its state. The Lambda reads it on
+  its first allocation per cold start (`ssm:GetParameter`, in `iam.tf`).
+- **The allocator's server certificate** must name the load balancer's
+  hostname, which only exists once the Service does. The EKS bootstrap waits
+  for it and issues the certificate from the same CA, so the matchmaker's
+  trust never changes — only `agones_allocator_url`, once per window.
+- **Agones' webhook and allocator certificate settings** are shared with the
+  local cluster in `infrastructure/k8s/agones/values-certs.yaml`. The webhook
+  pair names only in-cluster Service names, so it works unchanged on EKS.
 
 ### 4. Bootstrap
 
@@ -74,8 +86,9 @@ else follows from git.
 ### 5. The measurement window
 
 1. `terraform apply` in `infrastructure/eks`; wait for Argo CD to sync.
-2. Set the matchmaker's `ORCHESTRATOR` to `agones` and apply
-   `infrastructure/aws`.
+2. Set `orchestrator = "agones"` and `agones_allocator_url` (from the
+   bootstrap) and apply `infrastructure/aws`. A plan with `agones` and no URL
+   fails on purpose.
 3. Run the Phase 6 measurements.
 4. **Set `ORCHESTRATOR` back to `fargate` and apply — before destroying.**
    Destroying first leaves the live matchmaker pointing at a cluster that no
