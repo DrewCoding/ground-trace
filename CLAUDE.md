@@ -100,7 +100,10 @@ start). Only the selected backend is imported, because each reads its own
 required env vars at import. `fargate.py` launches a task per match;
 `agones.py` allocates from a Fleet's warm pool over REST with mTLS — see
 `docs/phase-2.md` for the allocator's response codes and why the cluster runs
-our own allocator certificates. Session rows carry `orchestrator`, and the
+our own allocator certificates. The deployed Lambda gets its client
+certificate from one SSM SecureString (`AGONES_TLS_PARAMETER`), uploaded by
+`scripts/put-allocator-tls.sh` and deliberately not a Terraform resource,
+since state would then hold the private key. Session rows carry `orchestrator`, and the
 Fargate cap counts only Fargate rows, since nothing deletes Agones rows.
 
 State lives in two DynamoDB tables: `queue` (tickets) and `sessions`

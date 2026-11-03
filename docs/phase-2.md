@@ -52,7 +52,9 @@ Agones' allocator serves REST as well as gRPC, so it can be called with
   allocator's allowlist (`allocator-client-ca`). `load_cert_chain` needs files:
   locally they're read from paths in `AGONES_CA_FILE`,
   `AGONES_CLIENT_CERT_FILE` and `AGONES_CLIENT_KEY_FILE`. The deployed Lambda
-  (Phase 5) will need them from Secrets Manager, written to `/tmp`.
+  reads them from an SSM SecureString instead (`AGONES_TLS_PARAMETER`; see
+  docs/phase-5.md), writing the cert and key to `/tmp` only for as long as
+  `load_cert_chain` takes.
 - **Server certificate — don't use Helm's.** Probed on 2026-10-17: the
   chart's generated server cert has an empty subject and no SAN (it only gets
   an IP SAN if `allocator.service.loadBalancerIP` is set). Python 3.13+'s

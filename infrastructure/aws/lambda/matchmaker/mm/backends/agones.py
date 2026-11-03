@@ -11,9 +11,12 @@ nothing to package" property is worth keeping.
 import json
 import os
 import ssl
+import tempfile
 import time
 import urllib.error
 import urllib.request
+
+import boto3
 
 from mm import config, metrics, sessions
 from mm.responses import MatchmakerError
@@ -25,10 +28,20 @@ FLEET = os.environ.get("AGONES_FLEET", "ground-trace")
 # mTLS both ways. The CA is the one that signed the allocator's server
 # certificate, not a public one: pinning it means nothing else can pose as the
 # allocator. The client certificate must be on the allocator's allowlist
-# (Helm's agones.allocator.clientCAs), or the TLS handshake itself fails.
-CA_FILE = os.environ["AGONES_CA_FILE"]
-CLIENT_CERT_FILE = os.environ["AGONES_CLIENT_CERT_FILE"]
-CLIENT_KEY_FILE = os.environ["AGONES_CLIENT_KEY_FILE"]
+# (the allocator-client-ca Secret), or the TLS handshake itself fails.
+#
+# A deployed Lambda has no certificate files to point at - the zip is the only
+# thing on its disk, and a private key must never be in that. It reads one
+# SecureString parameter holding all three PEMs instead, written by
+# scripts/put-allocator-tls.sh. serve_local.py runs where the files are, and
+# uses them directly.
+TLS_PARAMETER = os.environ.get("AGONES_TLS_PARAMETER")
+if TLS_PARAMETER:
+    CA_FILE = CLIENT_CERT_FILE = CLIENT_KEY_FILE = None
+else:
+    CA_FILE = os.environ["AGONES_CA_FILE"]
+    CLIENT_CERT_FILE = os.environ["AGONES_CLIENT_CERT_FILE"]
+    CLIENT_KEY_FILE = os.environ["AGONES_CLIENT_KEY_FILE"]
 
 # Every call happens inside a player's join or poll, behind API Gateway's 29s
 # integration limit. An allocator that slow is broken, not busy.
@@ -82,10 +95,39 @@ class AllocatorClient:
         # cluster is installed with our own certificate instead (see
         # docs/phase-2.md) rather than relaxing anything here.
         if self._context is None:
-            context = ssl.create_default_context(cafile = CA_FILE)
-            context.load_cert_chain(CLIENT_CERT_FILE, CLIENT_KEY_FILE)
-            self._context = context
+            if TLS_PARAMETER:
+                self._context = _context_from_parameter(TLS_PARAMETER)
+            else:
+                context = ssl.create_default_context(cafile = CA_FILE)
+                context.load_cert_chain(CLIENT_CERT_FILE, CLIENT_KEY_FILE)
+                self._context = context
         return self._context
+
+
+def _context_from_parameter(name):
+    # Once per cold start, on the first allocation, not at import: a
+    # container that only ever serves polls of matched tickets never needs it.
+    # Cached with the context afterwards, so warm invocations don't pay the
+    # SSM round trip.
+    value = boto3.client("ssm").get_parameter(Name = name, WithDecryption = True)
+    pems = json.loads(value["Parameter"]["Value"])
+
+    context = ssl.create_default_context(cadata = pems["ca"])
+
+    # load_cert_chain only accepts paths, so the key has to touch disk. /tmp
+    # outlives the invocation and is shared by every invocation in this
+    # sandbox, so it's there only for the moment it takes to read: mkdtemp
+    # makes the directory owner-only, and it's deleted on the way out.
+    with tempfile.TemporaryDirectory() as tmp:
+        cert_path = os.path.join(tmp, "client.crt")
+        key_path = os.path.join(tmp, "client.key")
+        with open(cert_path, "w") as f:
+            f.write(pems["cert"])
+        with open(key_path, "w") as f:
+            f.write(pems["key"])
+        context.load_cert_chain(cert_path, key_path)
+
+    return context
 
 
 allocator = AllocatorClient()
