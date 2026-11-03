@@ -6,12 +6,18 @@ progress — and one pipeline builds client and server from the same commit.
 
 **Done when:**
 
-- [ ] Argo CD manages Agones and the Fleet chart from this repo
+- [x] Argo CD manages Agones and the Fleet chart from this repo
+      (2026-10-30: Argo CD 3.5.6 adopted the Helm-installed Fleet with no
+      changes; one manual Agones sync moved the webhooks onto the pinned
+      cert, and the Ready server survived it. Helm's release records were
+      then deleted, so `helm uninstall` can't remove what Argo CD owns)
 - [ ] Changing the image tag in git rolls the Fleet; `Allocated` servers keep
       running until their match ends
 - [ ] CI builds the Unity server (and client) from a commit, pushes the image,
       and bumps the tag
-- [ ] Nothing is applied to the cluster by hand except bootstrapping Argo CD
+- [x] Nothing is applied to the cluster by hand except bootstrapping Argo CD
+      (`scripts/bootstrap-local.sh`: the out-of-band Secrets, Argo CD, the
+      root app)
 
 **Depends on:** Phase 3 (charts to deploy).
 
@@ -44,6 +50,19 @@ One root `Application`, pointing at a directory of `Application` manifests:
   Confirm the Argo CD version you install bundles a Helm that can render the
   Agones chart. If not: pin Agones to 1.60 (last Helm 3 release), or install
   Agones outside Argo CD and let it manage only the Fleet.
+  **Answered:** chart `argo-cd` 10.11.6 (Argo CD 3.5.6) bundles Helm 4.2.1,
+  and renders Agones 1.61 fine.
+- **Agones regenerates its certificates on every render.** The chart creates
+  new random webhook and allocator certs each time it's templated. Helm gets
+  away with it because the pod annotation `revision/tls-cert` restarts the
+  pods on every upgrade; Argo CD has no release revisions, so after a sync the
+  webhook configurations would trust a cert the running controller doesn't
+  serve, and every GameServer create would fail. `agones/values-certs.yaml`,
+  shared by every cluster, turns all generation off: the webhook's public
+  cert is pinned there as the caBundle, and its key plus the allocator's certs
+  are Secrets the bootstrap creates from `~/.ground-trace/`. The webhook cert
+  names only in-cluster Service DNS names, so the same pair works on any
+  cluster.
 - **CRD size.** Agones' CRDs are large enough that client-side apply can hit
   Kubernetes' annotation size limit. Enable `ServerSideApply=true` on the
   `agones` app — Akamai's Agones-on-k3s guide installs with server-side apply

@@ -19,7 +19,10 @@ spec:
         # creates, for one). Left unset, it would be the Application name -
         # the same today, but not something to depend on.
         releaseName: agones
+        # Later files win. The certificate settings are shared with EKS;
+        # the second file holds only what's local about this cluster.
         valueFiles:
+          - $values/infrastructure/k8s/agones/values-certs.yaml
           - $values/infrastructure/k8s/agones/values-local.yaml
     - repoURL: https://github.com/DrewCoding/ground-trace.git
       targetRevision: phase-0-matchmaker-fixes

@@ -1,8 +1,15 @@
-# Agones install settings for EKS (Phase 5). Not yet installed anywhere -
-# values here follow docs/phase-5.md and get checked when that cluster exists.
+# Agones install settings for EKS (Phase 5), on top of values-certs.yaml.
+# Not yet installed anywhere - values here follow docs/phase-5.md and get
+# checked when that cluster exists.
 agones:
   ping:
     install: false
+
+  crds:
+    # Same as local: deleting the Application must not take every
+    # GameServer's CRD with it. On EKS the whole cluster is destroyed after
+    # a window anyway, so this only matters mid-window.
+    cleanupOnDelete: false
 
   # Default replica counts: unlike the single local node, a multi-node
   # cluster gets real availability from them.
@@ -13,12 +20,11 @@ agones:
   # the labelled, tainted system node group.
   requireDedicatedNodes: true
 
-  allocator:
-    # Same reasons as values-local.yaml. The server certificate must name
-    # the allocator's load balancer hostname - reissue it from the same CA
-    # (docs/phase-2.md) so the matchmaker's trusted CA doesn't change.
-    generateTLS: false
-    generateClientTLS: false
+  # The allocator's server certificate (the allocator-tls Secret) must name
+  # its load balancer's hostname, which doesn't exist until the cluster does.
+  # The EKS bootstrap waits for it and issues the certificate from the same
+  # CA as local (docs/phase-2.md), so the matchmaker's trusted CA never
+  # changes - only agones_allocator_url does, once per window.
 
 # Must match the game server security group's UDP rule.
 gameservers:

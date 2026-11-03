@@ -1,0 +1,52 @@
+# Certificate settings shared by every cluster, layered under the
+# per-cluster values file (values-local.yaml, values-eks.yaml) by the Argo CD
+# Applications.
+#
+# Left to itself the chart generates new random webhook and allocator
+# certificates every time it's rendered. Helm gets away with that because
+# each upgrade restarts the pods (the revision/tls-cert annotation); Argo CD
+# has no release revisions, so after a sync the webhooks would trust a
+# certificate the running controller doesn't serve, and every GameServer
+# create would fail. So nothing is generated: the public halves are pinned
+# here, and the private keys are Secrets created out of band by the bootstrap
+# scripts from ~/.ground-trace/ (docs/phase-4.md).
+agones:
+  controller:
+    generateTLS: false
+    # The bootstrap creates agones-cert (server.crt/server.key) instead.
+    disableSecret: true
+    # The admission webhooks' caBundle: the public half of the pair in
+    # ~/.ground-trace/webhook/. Self-signed, naming only the in-cluster
+    # Service (agones-controller-service.agones-system.svc), so the same pair
+    # works on any cluster. It must match the key in agones-cert - regenerate
+    # one, update the other.
+    tlsCert: |
+      -----BEGIN CERTIFICATE-----
+      MIICPjCCAeOgAwIBAgIUFlsOv4FjK8zSiqjS+h8VVBbOecEwCgYIKoZIzj0EAwIw
+      JDEiMCAGA1UEAwwZYWdvbmVzLWNvbnRyb2xsZXItc2VydmljZTAeFw0yNjEwMjgy
+      MzA2MjNaFw0zMTEwMjcyMzA2MjNaMCQxIjAgBgNVBAMMGWFnb25lcy1jb250cm9s
+      bGVyLXNlcnZpY2UwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARwMCwaLX4XLDo7
+      gY65LOR1qd0U8+AU/CLLsKj03KN5t7JPNWPo8uqE6bjDC67HyWTXjCM5qloqqz/M
+      UnRJUjNEo4HyMIHvMB0GA1UdDgQWBBTFhhNL8Wwn6tkZQchmA8eSdnz/xTAfBgNV
+      HSMEGDAWgBTFhhNL8Wwn6tkZQchmA8eSdnz/xTB6BgNVHREEczBxghlhZ29uZXMt
+      Y29udHJvbGxlci1zZXJ2aWNlgidhZ29uZXMtY29udHJvbGxlci1zZXJ2aWNlLmFn
+      b25lcy1zeXN0ZW2CK2Fnb25lcy1jb250cm9sbGVyLXNlcnZpY2UuYWdvbmVzLXN5
+      c3RlbS5zdmMwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAww
+      CgYIKwYBBQUHAwEwCgYIKoZIzj0EAwIDSQAwRgIhAN7hUCWV37EYJ3sP2k0kCUx8
+      TbSQzd01SqtfwmfUrULnAiEA81TEzYq7DvCngST8Wacs4MH5VO/TTXeP0z69Wnkj
+      rHQ=
+      -----END CERTIFICATE-----
+
+  extensions:
+    # Only adds the revision/tls-cert restart annotation to the extensions
+    # pods - they serve the controller's certificate. Off for the same reason.
+    generateTLS: false
+
+  allocator:
+    # The bootstrap creates allocator-tls (the server certificate, from the
+    # CA in ~/.ground-trace/allocator/) and allocator-client-ca (the
+    # matchmaker's client certificate - its key must end in .crt, or the
+    # allocator silently skips it and rejects every client).
+    disableSecretCreation: true
+    generateTLS: false
+    generateClientTLS: false
