@@ -7,6 +7,8 @@ from botocore.exceptions import ClientError
 from mm import config, ddb
 from mm.responses import NotFoundError
 
+MAX_REPORTED_PLAYERS = 16
+
 
 def create(item):
     ddb.sessions.put_item(Item = item)
@@ -66,8 +68,51 @@ def active_session_count():
     ).get("Count", 0)
 
 
+def holds_player(session, player_id, recently_matched, now):
+    """Whether this account currently has a place in this session.
+
+    Decided from what the server reports, never from what a client says: a
+    client that could talk its way out of a match could queue for a second
+    one. recently_matched covers the gap before the server can vouch for the
+    player - while it boots, and until the heartbeat after they connect.
+    """
+    if not session or session.get("status") == "ending":
+        return False
+
+    # A cold start can outlast SESSION_STALE_SECONDS, and nothing heartbeats
+    # until the server is up, so a booting session is judged by the grace
+    # period alone.
+    if session.get("status") == "provisioning":
+        return recently_matched
+
+    if int(session.get("lastHeartbeat", 0)) < now - config.SESSION_STALE_SECONDS:
+        return False
+
+    players = session.get("players") or []
+    if player_id in players:
+        return True
+
+    # A full server that doesn't list them has no place left to hold. This is
+    # the player who was matched to a slot someone else reached first: the
+    # server turned them away, and without this they'd be handed the same
+    # full server on every re-queue until the grace period ran out.
+    if len(players) >= int(session.get("maxPlayers", config.PLAYERS_PER_MATCH)):
+        return False
+
+    return recently_matched
+
+
 def heartbeat(session_id, body):
     now = int(time.time())
+
+    # The accounts the server has connected, which is what lets holds_player
+    # tell a player in a match from one who has left it. Only strings, and
+    # bounded, since this is written straight into the row.
+    reported = body.get("players")
+    players = [
+        p for p in (reported if isinstance(reported, list) else [])
+        if isinstance(p, str) and len(p) <= 128
+    ][:MAX_REPORTED_PLAYERS]
 
     # Conditional, because UpdateItem would otherwise create the row. Anyone
     # holding the game client's API key could then mint sessions out of
@@ -77,7 +122,7 @@ def heartbeat(session_id, body):
         ddb.sessions.update_item(
             Key = {"sessionId": session_id},
             UpdateExpression = (
-                "SET #s = :status, playerCount = :count, "
+                "SET #s = :status, playerCount = :count, players = :players, "
                 "lastHeartbeat = :now, expiresAt = :expires"
             ),
             ConditionExpression = ddb.EXISTS_SESSION,
@@ -87,6 +132,7 @@ def heartbeat(session_id, body):
             ExpressionAttributeValues = {
                 ":status": body.get("status", "waiting"),
                 ":count": int(body.get("playerCount", 0)),
+                ":players": players,
                 ":now": now,
                 ":expires": now + config.SESSION_EXPIRY_SECONDS,
             },

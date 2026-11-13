@@ -30,7 +30,9 @@ is HTTP and this is a 20 Hz UDP game loop.
 |                 | `ground-trace-ecs-events`             | Same zip, 128 MB. Ends sessions and reports billed time when a game server task stops                    |
 | **EventBridge** | `ground-trace-game-server-stopped`    | ECS task state changes, `STOPPED` only, game server cluster only → `ecs-events`                         |
 | **API Gateway** | HTTP API (v2)                         | `POST /queue`, `GET·DELETE /queue/{ticketId}`, `POST /sessions/{id}/heartbeat`, `DELETE /sessions/{id}` |
-| **DynamoDB**    | `ground-trace-queue`                  | PK `ticketId`, GSI `status-queuedAt-index`, TTL on `expiresAt`, on-demand                               |
+| **Cognito**     | `ground-trace-players`                | Open sign-up, email verified by code. Its JWT authorizer gates the `/queue` routes                      |
+|                 | `ground-trace-operators`              | Admin-created accounts only. Gates `GET /dashboard`. Shares nothing with the player pool                |
+| **DynamoDB**    | `ground-trace-queue`                  | PK `ticketId` (the player's account id), GSI `status-queuedAt-index`, TTL on `expiresAt`, on-demand                               |
 |                 | `ground-trace-sessions`               | PK `sessionId`, GSI `status-createdAt-index`, TTL on `expiresAt`, on-demand                             |
 | **CloudWatch**  | `/ecs/ground-trace-game-server`       | 7-day retention                                                                                         |
 |                 | `/aws/lambda/ground-trace-*`          | Logs for both functions, 7-day retention                                                                |
@@ -59,14 +61,19 @@ Two details in the matchmaker row are the ones people get wrong:
 
 ### Flow
 
-1. Client `POST /queue` → a ticket row in DynamoDB. No server exists yet.
+0. The player signs in to the Cognito player pool from the game's own login
+   form and gets an ID token. Every queue request carries it.
+1. Client `POST /queue` → a ticket row in DynamoDB, keyed by the account. No
+   server exists yet.
 2. Every join, and every poll of a waiting ticket, re-evaluates the queue. Once
    enough players are waiting, their tickets are claimed atomically and a
    server is provisioned or an existing server with a free slot is reused.
 3. Client polls `GET /queue/{ticketId}` → `waiting` → `provisioning` → `matched`
-   with an `{ip, port}`.
-4. Client connects directly over UDP. The game's own lobby confirms both
-   players actually arrived before starting.
+   with an `{ip, port}` and a signed, one-minute `joinToken`.
+4. Client connects directly over UDP, presenting the token. The server admits
+   only tokens the matchmaker signed for that session, one connection per
+   account. The game's own lobby confirms both players actually arrived
+   before starting.
 5. The server heartbeats its state every 10s. When the last player leaves, it
    exits, which stops the task and ends billing. The task's `STOPPED` event
    removes its session row and records how long it was billed for.
@@ -207,6 +214,36 @@ the game client's (extractable) API key create sessions out of made-up ids, and
 since sessions count toward the server cap, a handful of requests stopped all
 matchmaking. Unknown sessions now get a 404.
 
+### One place per account, by construction
+
+Queueing requires a player account, and the queue row's key is that account's
+id. A second ticket for the same player is not something matching has to
+detect and reject: there is nowhere to write it. Opening the game five times
+gets one place in the queue.
+
+What a join changes is the row's `attemptId`, which is what the client is
+handed as its ticket id. The newest client holds the place; an older one is
+told `replaced` on its next poll. A player whose client crashed is never
+locked out by their own ghost.
+
+The same row is the record that an account is in a match. Queueing again
+returns the server the player already has, and `DELETE /queue` only removes a
+waiting ticket. Whether a player is still in a match is decided by what their
+server reports in its heartbeat, with a grace period for the time between
+being matched and being connected — never by what a client claims, since a
+client that could talk its way out of a match could queue for a second one.
+
+This is one account per verified email, not one account per person.
+
+### The address is not the way in
+
+A game server is a public IP with an open UDP port. Before join tokens, the
+login gate could be skipped by connecting to a server directly. Now a
+`matched` response carries a token naming the account and the session, signed
+with a secret only the matchmaker and the servers hold, valid for a minute.
+The server checks it in Netcode's connection approval, before a player object
+exists. No call back to AWS is needed, so the task role stays empty.
+
 ### Provisioning never blocks
 
 `RunTask` is called and the request returns immediately with
@@ -293,7 +330,10 @@ docker tag game-server:latest <account>.dkr.ecr.us-west-1.amazonaws.com/ground-t
 docker push <account>.dkr.ecr.us-west-1.amazonaws.com/ground-trace-game-server:latest
 ```
 
-`terraform output matchmaker_api_url` gives the endpoint the game client needs.
+The game client needs three values, set on `MatchmakerClient` in the Unity
+scene: `terraform output matchmaker_api_url`, `player_pool_client_id` and
+`player_pool_region`. None of them is a secret. The API key no longer goes in
+the client at all — only game servers use it.
 
 To launch a server by hand without going through matchmaking:
 
@@ -369,4 +409,5 @@ needs is enumerated explicitly and scoped to the `ground-trace-*` prefix.
 
 - Frontend live monitoring tickets and containers
 - CI/CD pipeline for client and server builds
-- Cognito for authenticated queue tickets
+- Join-token secret for the Agones fleet (those servers admit anyone until then)
+- SES for player verification email (Cognito's built-in sender caps at ~50 a day)

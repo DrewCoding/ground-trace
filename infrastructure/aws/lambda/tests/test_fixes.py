@@ -33,6 +33,7 @@ def test_lone_player_is_backfilled_when_a_slot_opens_later(ecs):
     _, body = poll(a["ticketId"])
 
     assert ecs.run_calls == []
+    assert body.pop("joinToken")
     assert body == {"status": "matched", "sessionId": "live",
                     "ip": "203.0.113.5", "port": 7777}
 

@@ -64,6 +64,8 @@ resource "aws_ecs_task_definition" "game_server" {
             { name = "EMPTY_SHUTDOWN_SECONDS", value = "60" },
             { name = "MATCHMAKER_URL", value = aws_apigatewayv2_stage.default.invoke_url },
             { name = "MATCHMAKER_KEY", value = var.matchmaker_api_key },
+            # Without this the server admits anyone who reaches its address.
+            { name = "JOIN_TOKEN_SECRET", value = random_password.join_token.result },
         ]
 
         logConfiguration = {

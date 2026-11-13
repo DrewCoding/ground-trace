@@ -11,9 +11,13 @@ from conftest import (
 )
 
 
-def test_rejects_requests_without_the_api_key():
-    assert call("POST", "/queue", key = None)[0] == 403
-    assert call("POST", "/queue", key = "wrong")[0] == 403
+def test_session_routes_reject_requests_without_the_api_key():
+    put_session("s1")
+
+    for key in (None, "wrong"):
+        status, _ = call("POST", "/sessions/s1/heartbeat", body = {}, key = key,
+                         params = {"sessionId": "s1"})
+        assert status == 403
 
 
 def test_dashboard_is_exempt_from_the_api_key():

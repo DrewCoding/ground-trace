@@ -10,6 +10,11 @@ terraform {
             source = "hashicorp/archive"
             version = "~> 2.0"
         }
+
+        random = {
+            source = "hashicorp/random"
+            version = "~> 3.0"
+        }
     }
 
     # State lives in S3 rather than on one laptop. The bucket is created

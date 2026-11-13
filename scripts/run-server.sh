@@ -27,12 +27,17 @@ echo "  subnet: $SUBNET"
 echo "  sg:     $SG"
 
 echo "Launching task..."
+# JOIN_TOKEN_SECRET is blanked on purpose. The task definition sets it, and a
+# server that has it admits only players carrying a token from the
+# matchmaker - which nobody connecting to a hand-launched server by address
+# has. Empty means the server checks nothing, so this one is open to anyone
+# who finds it for as long as it runs.
 TASK_ARN=$(aws ecs run-task --region "$REGION" \
   --cluster "$CLUSTER" \
   --task-definition "$TASK_DEF" \
   --launch-type FARGATE \
   --network-configuration "awsvpcConfiguration={subnets=[$SUBNET],securityGroups=[$SG],assignPublicIp=ENABLED}" \
-  --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER\",\"environment\":[{\"name\":\"EMPTY_SHUTDOWN_SECONDS\",\"value\":\"$IDLE_SECONDS\"}]}]}" \
+  --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER\",\"environment\":[{\"name\":\"EMPTY_SHUTDOWN_SECONDS\",\"value\":\"$IDLE_SECONDS\"},{\"name\":\"JOIN_TOKEN_SECRET\",\"value\":\"\"}]}]}" \
   --query "tasks[0].taskArn" --output text)
 
 TASK_ID="${TASK_ARN##*/}"

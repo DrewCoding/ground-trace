@@ -38,7 +38,9 @@ npm run lint     # eslint
 
 `frontend/.env.local` holds the Cognito and API values; `.env.example` lists the
 keys. Populate them from `terraform output` (`cognito_client_id`,
-`cognito_hosted_ui_domain`, `matchmaker_api_url`).
+`cognito_hosted_ui_domain`, `matchmaker_api_url`). Those are the operator
+pool's; the Unity client takes `player_pool_client_id` and
+`player_pool_region` instead.
 
 Launch a game server by hand, bypassing matchmaking entirely:
 
@@ -116,22 +118,54 @@ and provision. Errors inside it are caught by `tickets._match_opportunistically`
 so they never fail the request; they surface as the `MatchingErrors` metric and
 alarm instead of Lambda `Errors`.
 
-### Two independent auth paths
+### Three callers, three auth paths
 
-This is the easiest thing to break, because it spans three files:
+This is the easiest thing to break, because it spans four files. Which path
+applies is decided by the route, in `apigateway.tf` and again by path in
+`handler.py`; the two have to agree.
 
-- **Game client routes** (`/queue`, `/sessions/*`) authenticate with a shared
-  `x-api-key` header, compared using `hmac.compare_digest`. That key ships
-  inside the game build and is therefore recoverable.
-- **`GET /dashboard`** is gated by a Cognito JWT authorizer declared in
-  `cognito.tf` and attached to the route in `apigateway.tf`. The handler
-  **explicitly exempts this one route** from the `x-api-key` check, because such
-  requests arrive with a Bearer token and no key. If you add or move an
-  authorizer in Terraform, the handler's exemption condition has to move with it.
+- **Players** (`/queue`) carry a JWT from the Cognito **player** pool
+  (`cognito_players.tf`: open sign-up, email verification). API Gateway
+  validates it and passes the claims through; the handler uses `sub` as the
+  player's id and trusts no other source for it. The handler returns 401 when
+  the claim is absent, so a queue route that loses its authorizer refuses
+  everyone rather than admitting them.
+- **Game servers** (`/sessions/*`) send the shared `x-api-key`, compared with
+  `hmac.compare_digest`. The client no longer carries it. Builds from before
+  that change do, so it is only a secret once rotated.
+- **Operators** (`GET /dashboard`) carry a JWT from the **operator** pool
+  (`cognito.tf`: admin-created accounts only). The two pools share nothing,
+  so a player token cannot open the dashboard.
 
-Because the API key is recoverable, `MAX_CONCURRENT_SESSIONS` — not the key — is
-the real ceiling on spend. It holds even against someone spamming the endpoint
-with an extracted key. Treat it as a security control.
+Both JWT routes must be sent the Cognito **ID token** — see the note at the
+end of this file.
+
+`MAX_CONCURRENT_SESSIONS` is still the real ceiling on spend. Sign-up is open,
+so an account is cheap; what an account buys is one place in the queue.
+
+### Player identity in the queue
+
+- **A ticket row's key is the player.** `ticketId` on the row holds the
+  account's `sub`, which is what makes one place per account structural. The
+  "ticketId" a client holds and puts in the path is the row's `attemptId`,
+  rotated on every join; a poll or leave with an old one gets `replaced`.
+  Don't key anything by the id from the path.
+- **Whether an account is in a match is the server's call**
+  (`sessions.holds_player`): its heartbeat lists the accounts connected, and
+  a ticket matched within `MATCH_JOIN_GRACE_SECONDS` counts until the server
+  can vouch for it. `leave_queue` refuses to delete a matched ticket for the
+  same reason — the client must not be able to free itself.
+- **Matched tickets get a day-long `expiresAt`** (`claim_ticket`), because
+  nothing polls them once the player connects and the row is the only record
+  of the match. `release_tickets` puts the short one back.
+- **Join tokens** (`mm/jointoken.py`) are what the game server checks in
+  connection approval: `payload.signature`, HMAC-SHA256 with
+  `JOIN_TOKEN_SECRET`, a `random_password` shared with the task definition.
+  The format is duplicated in `MatchManager.cs` in the Unity repo; change
+  both. The Agones fleet chart does not set the secret yet, and a server
+  without it admits anyone.
+- `serve_local.py` has no authorizer, so it reads token claims **without
+  verifying them**. Local only.
 
 ### Correctness invariants worth knowing before editing
 
@@ -257,10 +291,8 @@ the PR, so don't merge red.
 
 `apigateway.tf` allows only `GET` and does not list `x-api-key` as an allowed
 header. That is deliberate: a malicious page cannot reach the mutating routes
-cross-origin even with a leaked key. Adding `x-api-key` to `allow_headers` or
-widening `allow_methods` would remove that protection. (Note the comment block
-there still describes the dashboard route as unauthenticated, which predates the
-JWT authorizer.)
+cross-origin even with a leaked key or a player's token. Adding `x-api-key` to
+`allow_headers` or widening `allow_methods` would remove that protection.
 
 ### Comment style
 
@@ -278,10 +310,12 @@ register: explain the trap, not the syntax.
 - `frontend/README.md` — unmodified Vite boilerplate; ignore it.
 
 Operator accounts are created by hand (`allow_admin_create_user_only = true`);
-there is no sign-up flow. The dashboard must send the Cognito **ID token**, not
+there is no sign-up flow for them. Players sign up themselves, in the game.
+The dashboard and the game client must both send the Cognito **ID token**, not
 the access token — Cognito's access token carries `client_id` rather than an
 `aud` claim, and the authorizer is configured with an audience, so using it
 yields a 401 that looks like a broken login.
 
 Per `README.md`, next up: live frontend monitoring, a client/server build
-pipeline, and Cognito-authenticated queue tickets.
+pipeline, the join-token secret for the Agones fleet, and SES for player
+verification email.

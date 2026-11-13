@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import time
+import uuid
 
 # archive_file zips lambda/matchmaker wholesale, so bytecode written there by a
 # local test run would ship in the next deploy. Must be set before the
@@ -21,6 +22,7 @@ os.environ.update({
     "SUBNET_IDS": "subnet-a,subnet-b",
     "SECURITY_GROUP_ID": "sg-test",
     "API_KEY": "test-key",
+    "JOIN_TOKEN_SECRET": "test-join-secret",
     "MAX_CONCURRENT_SESSIONS": "4",
     # Read when mm.backends.agones is imported. The files are never opened:
     # the agones fixture replaces the client before anything allocates.
@@ -226,8 +228,12 @@ def now():
 
 def put_ticket(ticket_id, queued_ago = 0, seen_ago = None, status = "waiting", **extra):
     queued_at = now() - queued_ago
+    # A ticket row is keyed by its player. Written by hand like this, the
+    # player and the attempt share one id, so poll("x") reads as player "x"
+    # polling their own ticket.
     item = {
         "ticketId": ticket_id,
+        "attemptId": ticket_id,
         "status": status,
         "queuedAt": queued_at,
         "expiresAt": queued_at + 300,
@@ -239,7 +245,9 @@ def put_ticket(ticket_id, queued_ago = 0, seen_ago = None, status = "waiting", *
 
 
 def get_ticket(ticket_id):
-    return queue_table().get_item(Key = {"ticketId": ticket_id}).get("Item")
+    """The row behind a ticket id as a client knows it, or behind a row key."""
+    player = _players.get(ticket_id, ticket_id)
+    return queue_table().get_item(Key = {"ticketId": player}).get("Item")
 
 
 def put_session(session_id, status = "waiting", heartbeat_ago = 0, players = 0,
@@ -278,9 +286,20 @@ def fill_capacity():
 
 # --- API -------------------------------------------------------------------
 
-def call(method, path, body = None, key = API_KEY, params = None):
+# Which player each join() was made as, so the tests can keep saying
+# poll(ticket_id) without carrying the player around: the id a client holds
+# is the attempt, and the row it names belongs to whoever joined.
+_players = {}
+
+
+def call(method, path, body = None, key = API_KEY, params = None, player = None):
+    context = {"http": {"method": method, "path": path}}
+    if player is not None:
+        # What API Gateway's JWT authorizer adds once it has verified a token.
+        context["authorizer"] = {"jwt": {"claims": {"sub": player}}}
+
     event = {
-        "requestContext": {"http": {"method": method, "path": path}},
+        "requestContext": context,
         "headers": {"x-api-key": key} if key is not None else {},
         "pathParameters": params or {},
         "body": json.dumps(body) if body is not None else None,
@@ -289,16 +308,23 @@ def call(method, path, body = None, key = API_KEY, params = None):
     return response["statusCode"], json.loads(response["body"])
 
 
-def join():
-    return call("POST", "/queue")
+def join(player = None):
+    """Queue as the given player - by default a new one each call."""
+    player = player or f"player-{uuid.uuid4()}"
+    status, body = call("POST", "/queue", player = player)
+    if "ticketId" in body:
+        _players[body["ticketId"]] = player
+    return status, body
 
 
-def poll(ticket_id):
-    return call("GET", f"/queue/{ticket_id}", params = {"ticketId": ticket_id})
+def poll(ticket_id, player = None):
+    return call("GET", f"/queue/{ticket_id}", params = {"ticketId": ticket_id},
+                player = player or _players.get(ticket_id, ticket_id))
 
 
-def leave(ticket_id):
-    return call("DELETE", f"/queue/{ticket_id}", params = {"ticketId": ticket_id})
+def leave(ticket_id, player = None):
+    return call("DELETE", f"/queue/{ticket_id}", params = {"ticketId": ticket_id},
+                player = player or _players.get(ticket_id, ticket_id))
 
 
 def heartbeat(session_id, body):

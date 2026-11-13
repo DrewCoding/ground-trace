@@ -20,6 +20,19 @@ locals {
     agones_tls_parameter = "/${var.project_name}/agones/allocator-tls"
 }
 
+# Signs the join tokens the matchmaker hands to matched players, and lets the
+# game servers verify them (mm/jointoken.py, MatchManager.ApprovalCheck).
+# Generated rather than supplied, since nothing outside AWS ever needs to
+# know it - unlike the API key, it isn't typed into anything. It does live in
+# state, as the API key already does by way of this function's environment.
+#
+# Replacing it (terraform apply -replace) invalidates nothing durable: tokens
+# last a minute, and servers launched afterwards get the new value.
+resource "random_password" "join_token" {
+    length = 48
+    special = false
+}
+
 resource "aws_cloudwatch_log_group" "matchmaker" {
     name = "/aws/lambda/${var.project_name}-matchmaker"
     retention_in_days = 7
@@ -51,6 +64,7 @@ resource "aws_lambda_function" "matchmaker" {
           CONTAINER_NAME = "game-server"
           GAME_PORT = tostring(var.game_server_port)
           API_KEY = var.matchmaker_api_key
+          JOIN_TOKEN_SECRET = random_password.join_token.result
           MAX_CONCURRENT_SESSIONS = tostring(var.max_concurrent_sessions)
           ORCHESTRATOR = var.orchestrator
         }, var.orchestrator == "agones" ? {

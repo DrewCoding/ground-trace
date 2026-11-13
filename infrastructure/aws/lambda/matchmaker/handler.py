@@ -14,25 +14,43 @@ from mm.responses import MatchmakerError, NotFoundError, respond
 API_KEY = os.environ["API_KEY"]
 
 
+def _player_id(event):
+    authorizer = event["requestContext"].get("authorizer") or {}
+    return ((authorizer.get("jwt") or {}).get("claims") or {}).get("sub")
+
+
 def lambda_handler(event, context):
     method = event["requestContext"]["http"]["method"]
     path = event["requestContext"]["http"]["path"]
     params = event.get("pathParameters") or {}
 
-    # The dashboard route is exempt from the shared key because API Gateway
-    # has already authenticated it with a Cognito JWT - the request arrives
-    # with a Bearer token and no x-api-key, so requiring one here would reject
-    # every legitimate request. Not an unauthenticated path: an invalid token
-    # is refused by the authorizer before this function is ever invoked.
+    # Three kinds of caller, three ways in. Which one applies is decided by
+    # the route, and has to agree with the authorizers in apigateway.tf.
     #
-    # Identifiers in the response are still truncated, because the key the
-    # game client carries is recoverable and shouldn't be the only thing
-    # standing between a leak and an actionable session id.
+    # /dashboard: operators. API Gateway has already checked a Cognito JWT
+    # from the operator pool, so there is nothing left to check here.
+    #
+    # /queue: players. API Gateway has checked a JWT from the player pool and
+    # passes its claims along; sub is the account, and the only identity the
+    # queue trusts. Nothing in the request body or path can name a different
+    # player. The claim is still required here, so that a route which lost
+    # its authorizer in Terraform refuses everyone instead of admitting them.
+    #
+    # Everything else (/sessions): game servers, with the shared key. It no
+    # longer ships in the client, so it is a secret again.
     #
     # HTTP API v2 lowercases header names, so this must be "x-api-key".
     # compare_digest rather than != so the comparison doesn't leak the key a
     # character at a time via timing.
-    if not (method == "GET" and path == "/dashboard"):
+    is_dashboard = method == "GET" and path == "/dashboard"
+    is_queue = path == "/queue" or path.startswith("/queue/")
+    player_id = None
+
+    if is_queue:
+        player_id = _player_id(event)
+        if not player_id:
+            return respond(401, {"error": "unauthorized"})
+    elif not is_dashboard:
         headers = event.get("headers") or {}
         if not hmac.compare_digest(headers.get("x-api-key", ""), API_KEY):
             return respond(403, {"error": "forbidden"})
@@ -42,13 +60,13 @@ def lambda_handler(event, context):
             return respond(200, dashboard.dashboard_snapshot())
 
         if method == "POST" and path == "/queue":
-            return respond(200, tickets.join_queue())
+            return respond(200, tickets.join_queue(player_id))
 
         if method == "GET" and path.startswith("/queue/"):
-            return respond(200, tickets.poll_ticket(params["ticketId"]))
+            return respond(200, tickets.poll_ticket(player_id, params["ticketId"]))
 
         if method == "DELETE" and path.startswith("/queue/"):
-            return respond(200, tickets.leave_queue(params["ticketId"]))
+            return respond(200, tickets.leave_queue(player_id, params["ticketId"]))
 
         if method == "POST" and path.endswith("/heartbeat"):
             body = json.loads(event.get("body") or "{}")

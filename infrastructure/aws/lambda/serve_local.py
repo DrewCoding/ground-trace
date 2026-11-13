@@ -14,12 +14,22 @@ the process exits. Requests are handled one at a time, so this exercises the
 whole flow but not the concurrent-claim races the tests cover.
 
 Point the Unity client's MatchmakerClient at it: matchmakerUrl
-http://127.0.0.1:8080 and apiKey matching --api-key. Unity 2022 refuses plain
-http:// unless Player Settings > "Allow downloads over HTTP" is enabled.
+http://127.0.0.1:8080. Unity 2022 refuses plain http:// unless Player
+Settings > "Allow downloads over HTTP" is enabled.
+
+Players still sign in against the real Cognito player pool, so that has to be
+deployed. What is missing locally is API Gateway's JWT authorizer, so the
+token's signature is NOT checked here: its claims are read and trusted as
+they are. Anyone who can reach this port can queue as anyone. Fine on a dev
+machine, and the reason to think before using --host 0.0.0.0.
+
+A game server only checks join tokens if it is started with JOIN_TOKEN_SECRET
+set to the same value as --join-token-secret; without it, it admits anyone.
 
 Not shipped: archive_file only zips lambda/matchmaker.
 """
 import argparse
+import base64
 import json
 import os
 import re
@@ -36,7 +46,9 @@ parser = argparse.ArgumentParser(description = __doc__.splitlines()[0])
 parser.add_argument("--host", default = "127.0.0.1")
 parser.add_argument("--port", type = int, default = 8080)
 parser.add_argument("--api-key", default = "local-dev-key",
-                    help = "what the Unity client must send as x-api-key")
+                    help = "what a game server must send as x-api-key")
+parser.add_argument("--join-token-secret", default = "local-join-token-secret",
+                    help = "signs join tokens; give game servers the same JOIN_TOKEN_SECRET")
 parser.add_argument("--allocator", default = "https://10.0.0.55")
 parser.add_argument("--fleet", default = "ground-trace")
 args = parser.parse_args()
@@ -50,6 +62,7 @@ os.environ.update({
     "SESSIONS_TABLE": "local-sessions",
     "QUEUE_TABLE": "local-queue",
     "API_KEY": args.api_key,
+    "JOIN_TOKEN_SECRET": args.join_token_secret,
     "ORCHESTRATOR": "agones",
     "AGONES_ALLOCATOR_URL": args.allocator,
     "AGONES_FLEET": args.fleet,
@@ -117,6 +130,20 @@ def path_parameters(path):
     return {}
 
 
+def unverified_claims(authorization):
+    """The claims in a Bearer token, taken on trust - see the module docstring.
+
+    Stands in for the JWT authorizer on the queue routes, minus the part
+    where it verifies anything. None for a missing or unreadable token, which
+    the handler turns into a 401 the same way a detached authorizer would.
+    """
+    try:
+        payload = authorization.split(" ", 1)[1].split(".")[1]
+        return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except (AttributeError, IndexError, ValueError):
+        return None
+
+
 class ApiGateway(BaseHTTPRequestHandler):
     """Turns HTTP requests into the HTTP API v2 events lambda_handler expects."""
 
@@ -125,8 +152,13 @@ class ApiGateway(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length).decode() if length else None
 
+        context = {"http": {"method": self.command, "path": path}}
+        claims = unverified_claims(self.headers.get("Authorization"))
+        if claims:
+            context["authorizer"] = {"jwt": {"claims": claims}}
+
         event = {
-            "requestContext": {"http": {"method": self.command, "path": path}},
+            "requestContext": context,
             # HTTP API v2 lowercases header names, and the handler relies on it.
             "headers": {k.lower(): v for k, v in self.headers.items()},
             "pathParameters": path_parameters(path),

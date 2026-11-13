@@ -2,16 +2,15 @@ resource "aws_apigatewayv2_api" "matchmaker" {
     name = "${var.project_name}-matchmaker"
     protocol_type = "HTTP"
 
-    # Needed for the browser dashboard. CORS is not a security control here -
-    # the dashboard route is unauthenticated by design, so there is nothing an
-    # origin restriction would protect. What it does do is keep browsers from
-    # reaching the mutating routes cross-origin: only GET is allowed, and
-    # x-api-key is not an allowed header, so a page cannot queue a player or
-    # spoof a heartbeat even with a stolen key.
-    # authorization must be allowed or the browser's preflight rejects the
-    # dashboard's Bearer token before the request is ever sent. x-api-key is
-    # deliberately absent: a page cannot reach the mutating routes
-    # cross-origin even with a leaked key, since only GET is permitted.
+    # Needed for the browser dashboard, which is the only thing that calls
+    # this API from a web page. authorization must be allowed or the
+    # browser's preflight rejects the dashboard's Bearer token before the
+    # request is ever sent.
+    #
+    # Only GET is allowed, which keeps a page from reaching the mutating
+    # routes cross-origin: it cannot queue a player with a token it got hold
+    # of, and x-api-key is not an allowed header, so it cannot spoof a
+    # heartbeat with a leaked key either.
     cors_configuration {
         allow_origins = ["*"]
         allow_methods = ["GET"]
@@ -29,28 +28,77 @@ resource "aws_apigatewayv2_integration" "matchmaker" {
 }
 
 locals {
-    # GET /dashboard is declared separately - it's the only route carrying a
-    # JWT authorizer, so it can't share this for_each.
-    matchmaker_routes = [
+    # Grouped by who calls them, because that decides how each is
+    # authenticated - and handler.py makes the same split by path, so a route
+    # moved between these lists has to move there too.
+
+    # Players. Carry the player pool's JWT authorizer (cognito_players.tf).
+    queue_routes = [
         "POST /queue",
         "GET /queue/{ticketId}",
         "DELETE /queue/{ticketId}",
+    ]
+
+    # Game servers. No authorizer: the handler checks the shared x-api-key,
+    # which only the servers hold now that the client signs in instead.
+    session_routes = [
         "POST /sessions/{sessionId}/heartbeat",
         "DELETE /sessions/{sessionId}",
     ]
 }
 
-resource "aws_apigatewayv2_route" "matchmaker" {
-    for_each = toset(local.matchmaker_routes)
+# An invalid or missing token is refused here, before the Lambda is invoked,
+# so an anonymous caller can't even make the matchmaker run.
+resource "aws_apigatewayv2_route" "queue" {
+    for_each = toset(local.queue_routes)
+
+    api_id = aws_apigatewayv2_api.matchmaker.id
+    route_key = each.value
+    target = "integrations/${aws_apigatewayv2_integration.matchmaker.id}"
+
+    authorization_type = "JWT"
+    authorizer_id = aws_apigatewayv2_authorizer.players.id
+}
+
+resource "aws_apigatewayv2_route" "sessions" {
+    for_each = toset(local.session_routes)
 
     api_id = aws_apigatewayv2_api.matchmaker.id
     route_key = each.value
     target = "integrations/${aws_apigatewayv2_integration.matchmaker.id}"
 }
 
-# Gated by Cognito rather than the shared API key. The key ships inside the
-# game client and is therefore recoverable; operator access shouldn't rest on
-# it. API Gateway rejects an invalid token before the Lambda is ever invoked,
+# The routes above used to be one resource. Without these, Terraform would
+# destroy and recreate all five instead of updating them in place, and every
+# request in between would 404.
+moved {
+    from = aws_apigatewayv2_route.matchmaker["POST /queue"]
+    to = aws_apigatewayv2_route.queue["POST /queue"]
+}
+
+moved {
+    from = aws_apigatewayv2_route.matchmaker["GET /queue/{ticketId}"]
+    to = aws_apigatewayv2_route.queue["GET /queue/{ticketId}"]
+}
+
+moved {
+    from = aws_apigatewayv2_route.matchmaker["DELETE /queue/{ticketId}"]
+    to = aws_apigatewayv2_route.queue["DELETE /queue/{ticketId}"]
+}
+
+moved {
+    from = aws_apigatewayv2_route.matchmaker["POST /sessions/{sessionId}/heartbeat"]
+    to = aws_apigatewayv2_route.sessions["POST /sessions/{sessionId}/heartbeat"]
+}
+
+moved {
+    from = aws_apigatewayv2_route.matchmaker["DELETE /sessions/{sessionId}"]
+    to = aws_apigatewayv2_route.sessions["DELETE /sessions/{sessionId}"]
+}
+
+# Gated by the operator pool (cognito.tf), not the player pool and not the
+# shared API key: being able to play, or being a game server, is no reason to
+# see the fleet. API Gateway rejects an invalid token before the Lambda is ever invoked,
 # so protecting the page without protecting this route would be pointless -
 # the data is behind the same gate as the UI.
 resource "aws_apigatewayv2_route" "dashboard" {

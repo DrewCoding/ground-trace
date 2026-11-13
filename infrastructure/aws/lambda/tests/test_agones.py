@@ -28,6 +28,7 @@ def test_matched_players_get_an_address_without_waiting(agones, ecs):
     status, body = poll(a["ticketId"])
 
     assert status == 200
+    assert body.pop("joinToken")
     assert body == {"status": "matched", "sessionId": "ground-trace-abc12-gs1",
                     "ip": ALLOCATED_IP, "port": 7001}
     assert ecs.run_calls == []

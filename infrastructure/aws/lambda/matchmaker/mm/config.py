@@ -16,6 +16,21 @@ TICKET_TTL_SECONDS = 300
 # server for one person. Five missed polls at the client's 2s interval.
 TICKET_STALE_SECONDS = 10
 
+# A matched ticket is the record that an account is in a match, and nobody
+# polls it once the player has connected. Kept well past any match length so
+# TTL can't erase it mid-game and let the same account queue a second time.
+MATCHED_TICKET_TTL_SECONDS = 24 * 60 * 60
+
+# How long a matched account is assumed to be on its way to the server before
+# the server's own player list has to vouch for it. Covers a Fargate cold
+# start plus the connect; the client gives up on provisioning at 150s.
+MATCH_JOIN_GRACE_SECONDS = 180
+
+# How long a join token is good for. A fresh one is issued on every poll that
+# reports the match, and the client connects straight away, so this only has
+# to outlast one connection attempt.
+JOIN_TOKEN_TTL_SECONDS = 60
+
 # How long a session can go without reporting before we stop offering it.
 # TTL on the table is only garbage collection and AWS makes no promptness
 # guarantee, so liveness is decided here by age instead. Comfortably longer
