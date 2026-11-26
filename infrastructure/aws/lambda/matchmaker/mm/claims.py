@@ -16,11 +16,8 @@ def claim_ticket(ticket_id):
     The conditional write is the whole concurrency story: two invocations
     racing for the same ticket can't both succeed, so no lock is needed.
 
-    matchedAt starts the grace period in which the account counts as in the
-    match before its server has reported it, and the long expiresAt keeps the
-    row for the length of the match - see tickets.join_queue.
+
     """
-    now = int(time.time())
     try:
         ddb.queue.update_item(
             Key = {"ticketId": ticket_id},
