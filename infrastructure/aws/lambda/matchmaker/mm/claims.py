@@ -1,5 +1,4 @@
-import time
-from mm import config, ddb
+from mm import ddb
 from botocore.exceptions import ClientError
 
 def stamp_session(ticket_ids, session_id):
