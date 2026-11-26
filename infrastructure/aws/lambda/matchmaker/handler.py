@@ -1,9 +1,7 @@
-import os
 import uuid
 import time
 import json
 import hmac
-import logging
 import traceback
 from decimal import Decimal
 
@@ -11,37 +9,11 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
-SESSIONS_TABLE = os.environ["SESSIONS_TABLE"]
-QUEUE_TABLE = os.environ["QUEUE_TABLE"]
-ECS_CLUSTER = os.environ["ECS_CLUSTER"]
-TASK_DEFINITION = os.environ["TASK_DEFINITION"]
-SUBNET_IDS = os.environ["SUBNET_IDS"].split(",")
-SECURITY_GROUP_ID = os.environ["SECURITY_GROUP_ID"]
-CONTAINER_NAME = os.environ.get("CONTAINER_NAME", "game-server")
-API_KEY = os.environ["API_KEY"]
-TICKET_TTL_SECONDS = 300
-PLAYERS_PER_MATCH = 2
-
-# How long a session can go without reporting before we stop offering it.
-# TTL on the table is only garbage collection and AWS makes no promptness
-# guarantee, so liveness is decided here by age instead. Comfortably longer
-# than SessionHeartbeat's 10s interval.
-SESSION_STALE_SECONDS = 45
-
-# A hard ceiling on how much this endpoint can ever cost. Unlike the shared
-# secret, this holds even against someone who extracted the key from a game
-# build - they can spam requests, but they cannot make us run more than this
-# many Fargate tasks at once.
-MAX_CONCURRENT_SESSIONS = int(os.environ.get("MAX_CONCURRENT_SESSIONS", "4"))
-
-METRICS_NAMESPACE = os.environ.get("METRICS_NAMESPACE", "GroundTrace/Matchmaker")
-
-log = logging.getLogger()
-log.setLevel(logging.INFO)
+from mm import config
 
 dynamodb = boto3.resource("dynamodb")
-sessions = dynamodb.Table(SESSIONS_TABLE)
-queue = dynamodb.Table(QUEUE_TABLE)
+sessions = dynamodb.Table(config.SESSIONS_TABLE)
+queue = dynamodb.Table(config.QUEUE_TABLE)
 ecs = boto3.client("ecs")
 ec2 = boto3.client("ec2")
 
@@ -68,7 +40,7 @@ def lambda_handler(event, context):
     # character at a time via timing.
     if not (method == "GET" and path == "/dashboard"):
         headers = event.get("headers") or {}
-        if not hmac.compare_digest(headers.get("x-api-key", ""), API_KEY):
+        if not hmac.compare_digest(headers.get("x-api-key", ""), config.API_KEY):
             return respond(403, {"error": "forbidden"})
 
     try:
@@ -97,7 +69,7 @@ def lambda_handler(event, context):
         return respond(400, {"error": f"missing {exc}"})
 
     except MatchmakerError as exc:
-        log.error("matchmaker: %s", exc)
+        config.log.error("matchmaker: %s", exc)
         return respond(503, {"error": str(exc)})
 
     except ClientError as exc:
@@ -105,14 +77,14 @@ def lambda_handler(event, context):
         # throttle. Surfacing the AWS error code in the response turns a
         # CloudWatch dig into a readable answer.
         code = exc.response["Error"]["Code"]
-        log.error("aws %s on %s: %s", code, method, exc)
+        config.log.error("aws %s on %s: %s", code, method, exc)
         return respond(502, {"error": "aws call failed", "code": code})
 
     except Exception as exc:
         # Anything unforeseen. Logged with a traceback so the cause is in
         # CloudWatch, but the client only gets a generic message - internal
         # details shouldn't leak out of a public endpoint.
-        log.error("unhandled on %s %s: %s\n%s", method, path, exc, traceback.format_exc())
+        config.log.error("unhandled on %s %s: %s\n%s", method, path, exc, traceback.format_exc())
         return respond(500, {"error": "internal error"})
 
 def dashboard_snapshot():
@@ -133,12 +105,12 @@ def dashboard_snapshot():
             "id": item["sessionId"][:8],
             "status": item.get("status", "unknown"),
             "playerCount": int(item.get("playerCount", 0)),
-            "maxPlayers": int(item.get("maxPlayers", PLAYERS_PER_MATCH)),
+            "maxPlayers": int(item.get("maxPlayers", config.PLAYERS_PER_MATCH)),
             "ageSeconds": now - int(item.get("createdAt", now)),
             "heartbeatAgeSeconds": heartbeat_age,
             # Surfaces the distinction the matchmaker itself makes: a row can
             # exist while its server is already gone.
-            "stale": heartbeat_age > SESSION_STALE_SECONDS,
+            "stale": heartbeat_age > config.SESSION_STALE_SECONDS,
             "ready": bool(item.get("publicIp")),
         })
 
@@ -157,8 +129,8 @@ def dashboard_snapshot():
         "queue": sorted(waiting, key = lambda t: -t["waitingSeconds"]),
         "capacity": {
             "active": len(live),
-            "max": MAX_CONCURRENT_SESSIONS,
-            "playersPerMatch": PLAYERS_PER_MATCH,
+            "max": config.MAX_CONCURRENT_SESSIONS,
+            "playersPerMatch": config.PLAYERS_PER_MATCH,
         },
     }
 
@@ -170,7 +142,7 @@ def join_queue():
         "ticketId": ticket_id,
         "status": "waiting",
         "queuedAt": now,
-        "expiresAt": now + TICKET_TTL_SECONDS,
+        "expiresAt": now + config.TICKET_TTL_SECONDS,
     })
 
     emit_metric("TicketsCreated", 1)
@@ -180,12 +152,12 @@ def join_queue():
     return {"ticketId": ticket_id, "status": "waiting"}
 
 def try_form_match():
-    cutoff = int(time.time()) - TICKET_TTL_SECONDS
+    cutoff = int(time.time()) - config.TICKET_TTL_SECONDS
 
     waiting = queue.query(
         IndexName = "status-queuedAt-index",
         KeyConditionExpression = Key("status").eq("waiting") & Key("queuedAt").gt(cutoff),
-        Limit = PLAYERS_PER_MATCH,
+        Limit = config.PLAYERS_PER_MATCH,
         ScanIndexForward = True,
     ).get("Items", [])
 
@@ -198,7 +170,7 @@ def try_form_match():
     # waiting for a partner and paying for a second container.
     session = find_joinable_session()
     if session:
-        free_slots = int(session.get("maxPlayers", PLAYERS_PER_MATCH)) - int(session.get("playerCount", 0))
+        free_slots = int(session.get("maxPlayers", config.PLAYERS_PER_MATCH)) - int(session.get("playerCount", 0))
         claimed = assign_tickets(waiting[:free_slots], session["sessionId"])
 
         # The metric that measures what backfill is actually worth: every one
@@ -210,10 +182,10 @@ def try_form_match():
 
     # Nothing to join, so a new server has to be worth it: only provision
     # once there are enough players for a full match.
-    if len(waiting) < PLAYERS_PER_MATCH:
+    if len(waiting) < config.PLAYERS_PER_MATCH:
         return
 
-    if active_session_count() >= MAX_CONCURRENT_SESSIONS:
+    if active_session_count() >= config.MAX_CONCURRENT_SESSIONS:
         # Leave everyone queued rather than provisioning past the cap. They
         # keep polling and get matched once something frees up.
         emit_metric("CapacityCapHit", 1)
@@ -248,7 +220,7 @@ def find_joinable_session():
     deregistering leaves its row behind until TTL gets around to it, and
     sending players to a dead address is worse than making them wait.
     """
-    cutoff = int(time.time()) - SESSION_STALE_SECONDS
+    cutoff = int(time.time()) - config.SESSION_STALE_SECONDS
 
     candidates = sessions.query(
         IndexName = "status-createdAt-index",
@@ -264,7 +236,7 @@ def find_joinable_session():
             # Still booting - no address to hand out yet.
             continue
 
-        if int(session.get("playerCount", 0)) < int(session.get("maxPlayers", PLAYERS_PER_MATCH)):
+        if int(session.get("playerCount", 0)) < int(session.get("maxPlayers", config.PLAYERS_PER_MATCH)):
             return session
 
     return None
@@ -372,20 +344,20 @@ def provision_session():
     session_id = str(uuid.uuid4())
 
     task = ecs.run_task(
-        cluster = ECS_CLUSTER,
-        taskDefinition = TASK_DEFINITION,
+        cluster = config.ECS_CLUSTER,
+        taskDefinition = config.TASK_DEFINITION,
         launchType = "FARGATE",
         count = 1,
         networkConfiguration = {
             "awsvpcConfiguration": {
-                "subnets": SUBNET_IDS,
-                "securityGroups": [SECURITY_GROUP_ID],
+                "subnets": config.SUBNET_IDS,
+                "securityGroups": [config.SECURITY_GROUP_ID],
                 "assignPublicIp": "ENABLED",
             }
         },
         overrides = {
             "containerOverrides": [{
-                "name": CONTAINER_NAME,
+                "name": config.CONTAINER_NAME,
                 "environment": [{"name": "SESSION_ID", "value": session_id}],
             }]
         },
@@ -411,7 +383,7 @@ def provision_session():
         "lastHeartbeat": now,
         "expiresAt": now + 45 * 4,
         "playerCount": 0,
-        "maxPlayers": PLAYERS_PER_MATCH,
+        "maxPlayers": config.PLAYERS_PER_MATCH,
         "port": 7777,
         "taskArn": task_arn,
     })
@@ -420,7 +392,7 @@ def provision_session():
 
 def resolve_public_ip(session):
     task = ecs.describe_tasks(
-        cluster = ECS_CLUSTER,
+        cluster = config.ECS_CLUSTER,
         tasks = [session["taskArn"]],
     ).get("tasks", [])
 
@@ -499,7 +471,7 @@ def emit_metric(name, value, unit = "Count", **properties):
         "_aws": {
             "Timestamp": int(time.time() * 1000),
             "CloudWatchMetrics": [{
-                "Namespace": METRICS_NAMESPACE,
+                "Namespace": config.METRICS_NAMESPACE,
                 "Dimensions": [[]],
                 "Metrics": [{"Name": name, "Unit": unit}],
             }],
