@@ -1,0 +1,35 @@
+name: Matchmaker tests
+
+on:
+  pull_request:
+    paths: ["infrastructure/aws/lambda/**"]
+  push:
+    branches: [main]
+    paths: ["infrastructure/aws/lambda/**"]
+  workflow_dispatch:
+
+# Tests run against moto, not AWS, so no credentials and no id-token: that
+# permission is what lets a job request AWS credentials through OIDC, and this
+# one has no reason to.
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure/aws/lambda
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Matches the Lambda runtime in lambda.tf. Local runs may use a newer
+      # Python; this is where the version that actually ships gets tested.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - run: pip install -r requirements-dev.txt
+
+      - run: python -m pytest -v
