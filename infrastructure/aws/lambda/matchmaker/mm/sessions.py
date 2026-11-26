@@ -60,3 +60,7 @@ def heartbeat(session_id, body):
     )
 
     return {"status": "ok"}
+
+def deregister(session_id):
+    ddb.sessions.delete_item(Key = {"sessionId": session_id})
+    return {"status": "deregistered"}

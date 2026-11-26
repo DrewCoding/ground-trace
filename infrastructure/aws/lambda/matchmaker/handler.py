@@ -58,7 +58,7 @@ def lambda_handler(event, context):
             return respond(200, sessions.heartbeat(params["sessionId"], body))
 
         if method == "DELETE" and path.startswith("/sessions/"):
-            return respond(200, deregister(params["sessionId"]))
+            return respond(200, sessions.deregister(params["sessionId"]))
 
         return respond(404, {"error": "no such route"})
 
@@ -308,7 +308,3 @@ def resolve_public_ip(session):
                     sessionId = session["sessionId"])
 
     return ip
-
-def deregister(session_id):
-    ddb.sessions.delete_item(Key = {"sessionId": session_id})
-    return {"status": "deregistered"}
