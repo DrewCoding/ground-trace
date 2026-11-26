@@ -84,6 +84,7 @@ data "aws_iam_policy_document" "github_actions_extra" {
       "iam:PutRolePolicy",
       "iam:DeleteRolePolicy",
       "iam:GetRolePolicy",
+      "iam:ListInstanceProfilesForRole",
       "iam:ListRolePolicies",
       "iam:ListAttachedRolePolicies",
       "iam:PassRole",
