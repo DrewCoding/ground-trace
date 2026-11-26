@@ -3,11 +3,6 @@ import os
 
 SESSIONS_TABLE = os.environ["SESSIONS_TABLE"]
 QUEUE_TABLE = os.environ["QUEUE_TABLE"]
-ECS_CLUSTER = os.environ["ECS_CLUSTER"]
-TASK_DEFINITION = os.environ["TASK_DEFINITION"]
-SUBNET_IDS = os.environ["SUBNET_IDS"].split(",")
-SECURITY_GROUP_ID = os.environ["SECURITY_GROUP_ID"]
-CONTAINER_NAME = os.environ.get("CONTAINER_NAME", "game-server")
 API_KEY = os.environ["API_KEY"]
 TICKET_TTL_SECONDS = 300
 PLAYERS_PER_MATCH = 2
