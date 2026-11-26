@@ -10,8 +10,7 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
-from mm import config
-from mm import ddb
+from mm import config, ddb, claims
 
 ecs = boto3.client("ecs")
 ec2 = boto3.client("ec2")
@@ -190,22 +189,22 @@ def try_form_match():
     now = int(time.time())
     claimed = []
     for ticket in waiting:
-        if claim_ticket(ticket["ticketId"]):
+        if claims.claim_ticket(ticket["ticketId"]):
             claimed.append(ticket["ticketId"])
             emit_metric("TimeToMatchSeconds", now - int(ticket["queuedAt"]), "Seconds")
         else:
-            release_tickets(claimed)
+            claims.release_tickets(claimed)
             emit_metric("ClaimContention", 1)
             return
 
     try:
         session_id = provision_session()
     except Exception:
-        release_tickets(claimed)
+        claims.release_tickets(claimed)
         emit_metric("ProvisionFailures", 1)
         raise
 
-    stamp_session(claimed, session_id)
+    claims.stamp_session(claimed, session_id)
     emit_metric("MatchesFormed", 1)
     emit_metric("ServersProvisioned", 1, sessionId = session_id)
 
@@ -248,25 +247,17 @@ def assign_tickets(tickets, session_id):
     claimed_tickets = []
 
     for ticket in tickets:
-        if claim_ticket(ticket["ticketId"]):
+        if claims.claim_ticket(ticket["ticketId"]):
             claimed_ids.append(ticket["ticketId"])
             claimed_tickets.append(ticket)
             emit_metric("TimeToMatchSeconds", now - int(ticket["queuedAt"]), "Seconds")
 
-    stamp_session(claimed_ids, session_id)
+    claims.stamp_session(claimed_ids, session_id)
 
     if claimed_tickets:
         emit_metric("MatchesFormed", 1)
 
     return claimed_tickets
-
-def stamp_session(ticket_ids, session_id):
-    for ticket_id in ticket_ids:
-        ddb.queue.update_item (
-            Key = {"ticketId": ticket_id},
-            UpdateExpression = "SET sessionId = :s",
-            ExpressionAttributeValues = {":s": session_id},
-        )
 
 def active_session_count():
     """How many sessions exist right now, in any state.
@@ -276,30 +267,6 @@ def active_session_count():
     this won't.
     """
     return ddb.sessions.scan(Select="COUNT").get("Count", 0)
-
-def claim_ticket(ticket_id):
-    try:
-        ddb.queue.update_item(
-            Key = {"ticketId": ticket_id},
-            UpdateExpression = "SET #s = :matched",
-            ConditionExpression = "#s = :waiting",
-            ExpressionAttributeNames = {"#s": "status"},
-            ExpressionAttributeValues = {":matched": "matched", ":waiting": "waiting"},
-        )
-        return True
-    except ClientError as exc:
-        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
-            return False
-        raise
-
-def release_tickets(ticket_ids):
-    for ticket_id in ticket_ids:
-        ddb.queue.update_item (
-            Key = {"ticketId": ticket_id},
-            UpdateExpression = "SET #s = :waiting",
-            ExpressionAttributeNames = {"#s": "status"},
-            ExpressionAttributeValues = {":waiting": "waiting"},
-        )
 
 def poll_ticket(ticket_id):
     ticket = ddb.queue.get_item(Key = {"ticketId": ticket_id}).get("Item")
