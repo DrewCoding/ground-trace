@@ -1,18 +1,16 @@
-import uuid
-import time
-import json
 import hmac
+import json
+import time
 import traceback
-from mm.responses import respond, MatchmakerError 
-from mm.metrics import emit_metric
-from mm.dashboard import dashboard_snapshot
-from mm import sessions
+import uuid
 
-import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
-from mm import config, ddb, claims
+from mm import backends, claims, config, ddb, sessions
+from mm.dashboard import dashboard_snapshot
+from mm.metrics import emit_metric
+from mm.responses import MatchmakerError, respond
 
 def lambda_handler(event, context):
     method = event["requestContext"]["http"]["method"]
@@ -132,7 +130,7 @@ def try_form_match():
     if len(waiting) < config.PLAYERS_PER_MATCH:
         return
 
-    if sessions.active_session_count() >= config.MAX_CONCURRENT_SESSIONS:
+    if not backends.active.has_capacity():
         # Leave everyone queued rather than provisioning past the cap. They
         # keep polling and get matched once something frees up.
         emit_metric("CapacityCapHit", 1)
@@ -150,7 +148,7 @@ def try_form_match():
             return
 
     try:
-        session_id = provision_session()
+        session_id = backends.active.provision()
     except Exception:
         claims.release_tickets(claimed)
         emit_metric("ProvisionFailures", 1)
@@ -199,19 +197,16 @@ def poll_ticket(ticket_id):
     if not session:
         return {"status": "expired"}
 
-    ip = session.get("publicIp")
-
-    if not ip:
-        ip = resolve_public_ip(session)
-    
-    if not ip:
+    address = backends.active.resolve_address(session)
+    if not address:
         return {"status": "provisioning"}
 
+    ip, port = address
     return {
         "status": "matched",
         "sessionId": session_id,
         "ip": ip,
-        "port": 7777
+        "port": port,
     }
 
 def leave_queue(ticket_id):

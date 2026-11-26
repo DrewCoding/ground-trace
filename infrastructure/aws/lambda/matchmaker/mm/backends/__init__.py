@@ -19,4 +19,3 @@ Everything else (queueing, claiming, backfill) is shared, which is what
 makes backends interchangeable.
 """
 from mm.backends import fargate as active
-# MAN ITS LIKE 2 AM

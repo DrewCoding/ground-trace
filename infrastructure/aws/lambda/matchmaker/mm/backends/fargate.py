@@ -1,9 +1,11 @@
-import boto3
-import uuid
 import os
 import time
-from mm.responses import MatchmakerError 
-from mm import config, metrics, sessions
+import uuid
+
+import boto3
+
+from mm import config, ddb, metrics, sessions
+from mm.responses import MatchmakerError
 
 ECS_CLUSTER = os.environ["ECS_CLUSTER"]
 TASK_DEFINITION = os.environ["TASK_DEFINITION"]
@@ -56,13 +58,12 @@ def provision():
 
     now = int(time.time())
 
-    sessions.create({
+    ddb.sessions.put_item(Item = {
         "sessionId": session_id,
-        "orchestrator": "fargate",
         "status": "provisioning",
         "createdAt": now,
         "lastHeartbeat": now,
-        "expiresAt": now + config.SESSION_EXPIRY_SECONDS,
+        "expiresAt": now + 45 * 4,
         "playerCount": 0,
         "maxPlayers": config.PLAYERS_PER_MATCH,
         "port": GAME_PORT,
@@ -75,7 +76,7 @@ def resolve_address(session):
     ip = session.get("publicIp") or _lookup_public_ip(session)
     if not ip:
         return None
-    return ip, int(session.get("port", GAME_PORT))
+    return ip, GAME_PORT
 
 def _lookup_public_ip(session):
     """A Fargate task can't discover its own public IP, so we look it up.
@@ -106,10 +107,11 @@ def _lookup_public_ip(session):
     if not ip:
         return None
 
-    # The task may have stopped, and ecs_events removed its row, since the
-    # poll read it. Handing out that address would send players to nothing.
-    if not sessions.set_public_ip(session["sessionId"], ip):
-        return None
+    ddb.sessions.update_item(
+        Key = {"sessionId": session["sessionId"]},
+        UpdateExpression = "SET publicIp = :ip",
+        ExpressionAttributeValues = {":ip": ip},
+    )
 
     # The real cold-start number: RunTask to a reachable address. This is
     # the first poll that found an IP, so it overstates slightly by up to
