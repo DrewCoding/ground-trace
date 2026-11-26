@@ -14,9 +14,6 @@ from botocore.exceptions import ClientError
 
 from mm import config, ddb, claims
 
-ecs = boto3.client("ecs")
-ec2 = boto3.client("ec2")
-
 def lambda_handler(event, context):
     method = event["requestContext"]["http"]["method"]
     path = event["requestContext"]["http"]["path"]
@@ -220,91 +217,3 @@ def poll_ticket(ticket_id):
 def leave_queue(ticket_id):
     ddb.queue.delete_item(Key = {"ticketId": ticket_id})
     return {"status": "cancelled"}
-
-def provision_session():
-    session_id = str(uuid.uuid4())
-
-    task = ecs.run_task(
-        cluster = config.ECS_CLUSTER,
-        taskDefinition = config.TASK_DEFINITION,
-        launchType = "FARGATE",
-        count = 1,
-        networkConfiguration = {
-            "awsvpcConfiguration": {
-                "subnets": config.SUBNET_IDS,
-                "securityGroups": [config.SECURITY_GROUP_ID],
-                "assignPublicIp": "ENABLED",
-            }
-        },
-        overrides = {
-            "containerOverrides": [{
-                "name": config.CONTAINER_NAME,
-                "environment": [{"name": "SESSION_ID", "value": session_id}],
-            }]
-        },
-    )
-
-    # RunTask returns HTTP 200 even when it couldn't place the task: the
-    # reason goes into "failures" and "tasks" comes back empty. Indexing
-    # straight into tasks[0] would raise IndexError and throw away the only
-    # useful information. Common real causes are no free IPs left in the
-    # subnet, Fargate capacity shortfalls, and account task quotas.
-    failures = task.get("failures") or []
-    if failures or not task.get("tasks"):
-        reason = failures[0].get("reason", "unknown") if failures else "no task returned"
-        raise MatchmakerError(f"could not start game server: {reason}")
-
-    now = int(time.time())
-    task_arn = task["tasks"][0]["taskArn"]
-
-    ddb.sessions.put_item( Item = {
-        "sessionId": session_id,
-        "status": "provisioning",
-        "createdAt": now,
-        "lastHeartbeat": now,
-        "expiresAt": now + 45 * 4,
-        "playerCount": 0,
-        "maxPlayers": config.PLAYERS_PER_MATCH,
-        "port": 7777,
-        "taskArn": task_arn,
-    })
-
-    return session_id
-
-def resolve_public_ip(session):
-    task = ecs.describe_tasks(
-        cluster = config.ECS_CLUSTER,
-        tasks = [session["taskArn"]],
-    ).get("tasks", [])
-
-    if not task or task[0]["lastStatus"] != "RUNNING":
-        return None
-
-    eni_id = None
-    for attachment in task[0].get("attachments", []):
-        for detail in attachment.get("details", []):
-            if detail["name"] == "networkInterfaceId":
-                eni_id = detail["value"]
-
-    if not eni_id:
-        return None
-
-    enis = ec2.describe_network_interfaces(NetworkInterfaceIds = [eni_id])
-    associate = enis["NetworkInterfaces"][0].get("Association") or {}
-    ip = associate.get("PublicIp")
-
-    if ip:
-        ddb.sessions.update_item(
-            Key = {"sessionId": session["sessionId"]},
-            UpdateExpression = "SET publicIp = :ip",
-            ExpressionAttributeValues = {":ip": ip},
-        )
-
-        # The real cold-start number: RunTask to a reachable address. This is
-        # the first poll that found an IP, so it overstates slightly by up to
-        # one poll interval - but it's measured rather than guessed.
-        emit_metric("ProvisionDurationSeconds",
-                    int(time.time()) - int(session["createdAt"]), "Seconds",
-                    sessionId = session["sessionId"])
-
-    return ip
