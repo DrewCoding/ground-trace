@@ -45,3 +45,7 @@ terraform.rc
 
 build/
 *.zip
+
+# Python bytecode from local test runs. Inside lambda/matchmaker it would ship
+# in the Lambda zip; conftest.py prevents that, and this keeps it out of git.
+__pycache__/
