@@ -5,6 +5,7 @@ import hmac
 import traceback
 from mm.responses import respond, MatchmakerError 
 from mm.metrics import emit_metric
+from mm import sessions
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -53,7 +54,7 @@ def lambda_handler(event, context):
 
         if method == "POST" and path.endswith("/heartbeat"):
             body = json.loads(event.get("body") or "{}")
-            return respond(200, heartbeat(params["sessionId"], body))
+            return respond(200, sessions.heartbeat(params["sessionId"], body))
 
         if method == "DELETE" and path.startswith("/sessions/"):
             return respond(200, deregister(params["sessionId"]))
@@ -163,7 +164,7 @@ def try_form_match():
     # slot needs only enough players to fill it - not a whole match - so a
     # lone queued player can join a 1v1 whose opponent left, instead of
     # waiting for a partner and paying for a second container.
-    session = find_joinable_session()
+    session = sessions.find_joinable_session()
     if session:
         free_slots = int(session.get("maxPlayers", config.PLAYERS_PER_MATCH)) - int(session.get("playerCount", 0))
         claimed = assign_tickets(waiting[:free_slots], session["sessionId"])
@@ -180,7 +181,7 @@ def try_form_match():
     if len(waiting) < config.PLAYERS_PER_MATCH:
         return
 
-    if active_session_count() >= config.MAX_CONCURRENT_SESSIONS:
+    if sessions.active_session_count() >= config.MAX_CONCURRENT_SESSIONS:
         # Leave everyone queued rather than provisioning past the cap. They
         # keep polling and get matched once something frees up.
         emit_metric("CapacityCapHit", 1)
@@ -208,34 +209,6 @@ def try_form_match():
     emit_metric("MatchesFormed", 1)
     emit_metric("ServersProvisioned", 1, sessionId = session_id)
 
-def find_joinable_session():
-    """An existing server that's up, reachable, and has room.
-
-    The staleness check is the important part: a server that died without
-    deregistering leaves its row behind until TTL gets around to it, and
-    sending players to a dead address is worse than making them wait.
-    """
-    cutoff = int(time.time()) - config.SESSION_STALE_SECONDS
-
-    candidates = ddb.sessions.query(
-        IndexName = "status-createdAt-index",
-        KeyConditionExpression = Key("status").eq("waiting"),
-        ScanIndexForward = True,
-    ).get("Items", [])
-
-    for session in candidates:
-        if int(session.get("lastHeartbeat", 0)) < cutoff:
-            continue
-
-        if not session.get("publicIp"):
-            # Still booting - no address to hand out yet.
-            continue
-
-        if int(session.get("playerCount", 0)) < int(session.get("maxPlayers", config.PLAYERS_PER_MATCH)):
-            return session
-
-    return None
-
 def assign_tickets(tickets, session_id):
     """Claim what we can and point it at a session.
 
@@ -258,15 +231,6 @@ def assign_tickets(tickets, session_id):
         emit_metric("MatchesFormed", 1)
 
     return claimed_tickets
-
-def active_session_count():
-    """How many sessions exist right now, in any state.
-
-    A Scan reads the whole table, which is fine at this size and would need
-    revisiting at volume - a counter item or a per-status query would scale,
-    this won't.
-    """
-    return ddb.sessions.scan(Select="COUNT").get("Count", 0)
 
 def poll_ticket(ticket_id):
     ticket = ddb.queue.get_item(Key = {"ticketId": ticket_id}).get("Item")
@@ -390,28 +354,6 @@ def resolve_public_ip(session):
                     sessionId = session["sessionId"])
 
     return ip
-
-def heartbeat(session_id, body):
-    now = int(time.time())
-
-    ddb.sessions.update_item(
-        Key = {"sessionId": session_id},
-        UpdateExpression = (
-            "SET #s = :status, playerCount = :count, "
-            "lastHeartbeat = :now, expiresAt = :expires"
-        ),
-        ExpressionAttributeNames = {
-            "#s" : "status"
-        },
-        ExpressionAttributeValues = {
-            ":status": body.get("status", "waiting"),
-            ":count": int(body.get("playerCount", 0)),
-            ":now": now,
-            ":expires": now + 45 * 4,
-        }
-    )
-
-    return {"status": "ok"}
 
 def deregister(session_id):
     ddb.sessions.delete_item(Key = {"sessionId": session_id})
