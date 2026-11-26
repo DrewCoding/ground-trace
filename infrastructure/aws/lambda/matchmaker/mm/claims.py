@@ -24,15 +24,10 @@ def claim_ticket(ticket_id):
     try:
         ddb.queue.update_item(
             Key = {"ticketId": ticket_id},
-            UpdateExpression = "SET #s = :matched, matchedAt = :now, expiresAt = :expires",
+            UpdateExpression = "SET #s = :matched",
             ConditionExpression = "#s = :waiting",
             ExpressionAttributeNames = {"#s": "status"},
-            ExpressionAttributeValues = {
-                ":matched": "matched",
-                ":waiting": "waiting",
-                ":now": now,
-                ":expires": now + config.MATCHED_TICKET_TTL_SECONDS,
-            },
+            ExpressionAttributeValues = {":matched": "matched", ":waiting": "waiting"},
         )
         return True
     except ClientError as exc:
