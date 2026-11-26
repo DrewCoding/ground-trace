@@ -11,10 +11,8 @@ from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 from mm import config
+from mm import ddb
 
-dynamodb = boto3.resource("dynamodb")
-sessions = dynamodb.Table(config.SESSIONS_TABLE)
-queue = dynamodb.Table(config.QUEUE_TABLE)
 ecs = boto3.client("ecs")
 ec2 = boto3.client("ec2")
 
@@ -97,7 +95,7 @@ def dashboard_snapshot():
     now = int(time.time())
 
     live = []
-    for item in sessions.scan().get("Items", []):
+    for item in ddb.sessions.scan().get("Items", []):
         heartbeat_age = now - int(item.get("lastHeartbeat", 0))
         live.append({
             "id": item["sessionId"][:8],
@@ -113,7 +111,7 @@ def dashboard_snapshot():
         })
 
     waiting = []
-    for item in queue.scan().get("Items", []):
+    for item in ddb.queue.scan().get("Items", []):
         if item.get("status") != "waiting":
             continue
         waiting.append({
@@ -136,7 +134,7 @@ def join_queue():
     ticket_id = str(uuid.uuid4())
     now = int(time.time())
 
-    queue.put_item(Item={
+    ddb.queue.put_item(Item={
         "ticketId": ticket_id,
         "status": "waiting",
         "queuedAt": now,
@@ -152,7 +150,7 @@ def join_queue():
 def try_form_match():
     cutoff = int(time.time()) - config.TICKET_TTL_SECONDS
 
-    waiting = queue.query(
+    waiting = ddb.queue.query(
         IndexName = "status-queuedAt-index",
         KeyConditionExpression = Key("status").eq("waiting") & Key("queuedAt").gt(cutoff),
         Limit = config.PLAYERS_PER_MATCH,
@@ -220,7 +218,7 @@ def find_joinable_session():
     """
     cutoff = int(time.time()) - config.SESSION_STALE_SECONDS
 
-    candidates = sessions.query(
+    candidates = ddb.sessions.query(
         IndexName = "status-createdAt-index",
         KeyConditionExpression = Key("status").eq("waiting"),
         ScanIndexForward = True,
@@ -264,7 +262,7 @@ def assign_tickets(tickets, session_id):
 
 def stamp_session(ticket_ids, session_id):
     for ticket_id in ticket_ids:
-        queue.update_item (
+        ddb.queue.update_item (
             Key = {"ticketId": ticket_id},
             UpdateExpression = "SET sessionId = :s",
             ExpressionAttributeValues = {":s": session_id},
@@ -277,11 +275,11 @@ def active_session_count():
     revisiting at volume - a counter item or a per-status query would scale,
     this won't.
     """
-    return sessions.scan(Select="COUNT").get("Count", 0)
+    return ddb.sessions.scan(Select="COUNT").get("Count", 0)
 
 def claim_ticket(ticket_id):
     try:
-        queue.update_item(
+        ddb.queue.update_item(
             Key = {"ticketId": ticket_id},
             UpdateExpression = "SET #s = :matched",
             ConditionExpression = "#s = :waiting",
@@ -296,7 +294,7 @@ def claim_ticket(ticket_id):
 
 def release_tickets(ticket_ids):
     for ticket_id in ticket_ids:
-        queue.update_item (
+        ddb.queue.update_item (
             Key = {"ticketId": ticket_id},
             UpdateExpression = "SET #s = :waiting",
             ExpressionAttributeNames = {"#s": "status"},
@@ -304,7 +302,7 @@ def release_tickets(ticket_ids):
         )
 
 def poll_ticket(ticket_id):
-    ticket = queue.get_item(Key = {"ticketId": ticket_id}).get("Item")
+    ticket = ddb.queue.get_item(Key = {"ticketId": ticket_id}).get("Item")
     if not ticket:
         return {"status": "expired"}
 
@@ -315,7 +313,7 @@ def poll_ticket(ticket_id):
     if not session_id:
         return {"status": "provisioning"}
 
-    session = sessions.get_item(Key = {"sessionId": session_id}).get("Item")
+    session = ddb.sessions.get_item(Key = {"sessionId": session_id}).get("Item")
     if not session:
         return {"status": "expired"}
 
@@ -335,7 +333,7 @@ def poll_ticket(ticket_id):
     }
 
 def leave_queue(ticket_id):
-    queue.delete_item(Key = {"ticketId": ticket_id})
+    ddb.queue.delete_item(Key = {"ticketId": ticket_id})
     return {"status": "cancelled"}
 
 def provision_session():
@@ -374,7 +372,7 @@ def provision_session():
     now = int(time.time())
     task_arn = task["tasks"][0]["taskArn"]
 
-    sessions.put_item( Item = {
+    ddb.sessions.put_item( Item = {
         "sessionId": session_id,
         "status": "provisioning",
         "createdAt": now,
@@ -411,7 +409,7 @@ def resolve_public_ip(session):
     ip = associate.get("PublicIp")
 
     if ip:
-        sessions.update_item(
+        ddb.sessions.update_item(
             Key = {"sessionId": session["sessionId"]},
             UpdateExpression = "SET publicIp = :ip",
             ExpressionAttributeValues = {":ip": ip},
@@ -429,7 +427,7 @@ def resolve_public_ip(session):
 def heartbeat(session_id, body):
     now = int(time.time())
 
-    sessions.update_item(
+    ddb.sessions.update_item(
         Key = {"sessionId": session_id},
         UpdateExpression = (
             "SET #s = :status, playerCount = :count, "
@@ -449,5 +447,5 @@ def heartbeat(session_id, body):
     return {"status": "ok"}
 
 def deregister(session_id):
-    sessions.delete_item(Key = {"sessionId": session_id})
+    ddb.sessions.delete_item(Key = {"sessionId": session_id})
     return {"status": "deregistered"}
