@@ -3,7 +3,8 @@ import time
 import json
 import hmac
 import traceback
-from decimal import Decimal
+from mm.responses import respond, MatchmakerError 
+from mm.metrics import emit_metric
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -16,9 +17,6 @@ sessions = dynamodb.Table(config.SESSIONS_TABLE)
 queue = dynamodb.Table(config.QUEUE_TABLE)
 ecs = boto3.client("ecs")
 ec2 = boto3.client("ec2")
-
-class MatchmakerError(Exception):
-    """Something went wrong that the caller should hear a real reason for."""
 
 def lambda_handler(event, context):
     method = event["requestContext"]["http"]["method"]
@@ -453,42 +451,3 @@ def heartbeat(session_id, body):
 def deregister(session_id):
     sessions.delete_item(Key = {"sessionId": session_id})
     return {"status": "deregistered"}
-
-def emit_metric(name, value, unit = "Count", **properties):
-    """Publish a metric via CloudWatch Embedded Metric Format.
-
-    EMF works by writing a specially shaped JSON line to stdout, which
-    CloudWatch parses out of the log stream and turns into a metric. That
-    avoids a PutMetricData call on every invocation - no extra latency in the
-    request path, no extra IAM permission, and no failure mode if the metrics
-    API is having a bad day.
-
-    Uses print rather than the logger on purpose: Lambda's default log format
-    prefixes each line with a timestamp, request id and level, which would
-    stop CloudWatch recognising the JSON as EMF.
-    """
-    payload = {
-        "_aws": {
-            "Timestamp": int(time.time() * 1000),
-            "CloudWatchMetrics": [{
-                "Namespace": config.METRICS_NAMESPACE,
-                "Dimensions": [[]],
-                "Metrics": [{"Name": name, "Unit": unit}],
-            }],
-        },
-        name: value,
-    }
-    payload.update(properties)
-    print(json.dumps(payload, default = decimal_default))
-
-def respond(code, body):
-    return {
-        "statusCode": code,
-        "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(body, default=decimal_default),
-    }
-
-def decimal_default(value):
-    if isinstance(value, Decimal):
-        return int(value) if value % 1 == 0 else float(value)
-    raise TypeError(f"Not serializable: {type(value)}")
