@@ -9,7 +9,11 @@ from mm import config, sessions, tickets
 from mm.dashboard import dashboard_snapshot
 from mm.responses import MatchmakerError, NotFoundError, respond
 
+# Read here rather than in mm.config because only this entry point uses it.
+# ecs_events.py imports mm.config too, and its function is deliberately given
+# no API key - in config, this line would fail that function's every cold start.
 API_KEY = os.environ["API_KEY"]
+
 
 def lambda_handler(event, context):
     method = event["requestContext"]["http"]["method"]
@@ -31,7 +35,7 @@ def lambda_handler(event, context):
     # character at a time via timing.
     if not (method == "GET" and path == "/dashboard"):
         headers = event.get("headers") or {}
-        if not hmac.compare_digest(headers.get("x-api-key", ""), config.API_KEY):
+        if not hmac.compare_digest(headers.get("x-api-key", ""), API_KEY):
             return respond(403, {"error": "forbidden"})
 
     try:
