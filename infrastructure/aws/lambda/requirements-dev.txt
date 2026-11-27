@@ -1,2 +1,5 @@
 pytest==9.1.1
-moto[dynamodb]==5.2.4
+moto[dynamodb,ssm]==5.2.4
+# Builds throwaway certificates for the allocator mTLS tests. moto already
+# depends on it; pinned here because the tests import it directly.
+cryptography==50.0.2

@@ -62,10 +62,11 @@ def provision():
 
     ddb.sessions.put_item(Item = {
         "sessionId": session_id,
+        "orchestrator": "fargate",
         "status": "provisioning",
         "createdAt": now,
         "lastHeartbeat": now,
-        "expiresAt": now + 45 * 4,
+        "expiresAt": now + config.SESSION_EXPIRY_SECONDS,
         "playerCount": 0,
         "maxPlayers": config.PLAYERS_PER_MATCH,
         "port": GAME_PORT,

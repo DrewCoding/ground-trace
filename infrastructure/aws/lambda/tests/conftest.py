@@ -8,7 +8,8 @@ import time
 # imported below.
 sys.dont_write_bytecode = True
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "matchmaker"))
+MATCHMAKER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "matchmaker")
+sys.path.insert(0, MATCHMAKER_DIR)
 
 os.environ.update({
     "AWS_DEFAULT_REGION": "us-west-1",
@@ -22,6 +23,12 @@ os.environ.update({
     "SECURITY_GROUP_ID": "sg-test",
     "API_KEY": "test-key",
     "MAX_CONCURRENT_SESSIONS": "4",
+    # Read when mm.backends.agones is imported. The files are never opened:
+    # the agones fixture replaces the client before anything allocates.
+    "AGONES_ALLOCATOR_URL": "https://allocator.test",
+    "AGONES_CA_FILE": "/nonexistent/ca.crt",
+    "AGONES_CLIENT_CERT_FILE": "/nonexistent/client.crt",
+    "AGONES_CLIENT_KEY_FILE": "/nonexistent/client.key",
 })
 
 # Started before anything creates a boto3 client: handler builds its clients
@@ -152,6 +159,62 @@ def client_error(code, operation = "RunTask"):
     return ClientError({"Error": {"Code": code, "Message": code}}, operation)
 
 
+# --- Agones fake ------------------------------------------------------------
+#
+# Stands in for the allocator's REST endpoint, with the response shapes a real
+# Agones allocator returns: 200 with the server's address, 429 when no server
+# is Ready, 409 on contention.
+
+ALLOCATED_IP = "10.0.0.55"
+
+
+class FakeAllocator:
+    def __init__(self):
+        self.requests = []
+        self.status = 200
+        self.raise_error = None
+        self.next_port = 7000
+
+    def allocate(self, request):
+        if self.raise_error:
+            raise self.raise_error
+
+        self.requests.append(request)
+
+        if self.status == 429:
+            return 429, {"code": 8, "message": "there is no available GameServer to allocate", "details": []}
+        if self.status == 409:
+            return 409, {"code": 10, "message": "conflict in GameServer selection", "details": []}
+        if self.status != 200:
+            return self.status, {"message": "allocator broke"}
+
+        self.next_port += 1
+        return 200, {
+            "gameServerName": f"ground-trace-abc12-gs{len(self.requests)}",
+            "address": ALLOCATED_IP,
+            "ports": [{"name": "default", "port": self.next_port}],
+            "nodeName": "node-1",
+        }
+
+
+@pytest.fixture
+def agones(monkeypatch):
+    """Switch the matchmaker to the Agones backend, with a fake allocator.
+
+    Not autouse: every other test runs against Fargate, as production does by
+    default. This swaps the same attributes a real ORCHESTRATOR=agones deploy
+    would have set at import.
+    """
+    from mm import backends, config
+    from mm.backends import agones as agones_backend
+
+    fake = FakeAllocator()
+    monkeypatch.setattr(agones_backend, "allocator", fake)
+    monkeypatch.setattr(backends, "active", agones_backend)
+    monkeypatch.setattr(config, "ORCHESTRATOR", "agones")
+    return fake
+
+
 # --- Table helpers ---------------------------------------------------------
 
 def queue_table():
@@ -185,7 +248,7 @@ def get_ticket(ticket_id):
 
 
 def put_session(session_id, status = "waiting", heartbeat_ago = 0, players = 0,
-                max_players = 2, ip = "203.0.113.5", port = 7777):
+                max_players = 2, ip = "203.0.113.5", port = 7777, **extra):
     item = {
         "sessionId": session_id,
         "status": status,
@@ -196,6 +259,7 @@ def put_session(session_id, status = "waiting", heartbeat_ago = 0, players = 0,
         "maxPlayers": max_players,
         "port": port,
         "taskArn": f"arn:aws:ecs:us-west-1:123456789012:task/test-cluster/{session_id}",
+        **extra,
     }
     # No address yet means the server is still booting.
     if ip:

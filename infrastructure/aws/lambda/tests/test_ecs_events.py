@@ -12,10 +12,9 @@ from datetime import datetime
 from mm import sessions
 
 from conftest import (
-    emitted_metrics, fill_capacity, get_session, join, poll, put_session,
+    MATCHMAKER_DIR, emitted_metrics, fill_capacity, get_session, join, poll, put_session,
 )
 
-MATCHMAKER_DIR = os.path.join(os.path.dirname(__file__), "..", "matchmaker")
 
 
 def handle(event):

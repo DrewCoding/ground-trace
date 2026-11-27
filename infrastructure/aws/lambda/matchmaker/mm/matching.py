@@ -83,6 +83,13 @@ def try_form_match(new_ticket = None):
         emit_metric("ProvisionFailures", 1)
         raise
 
+    if session_id is None:
+        # No server to be had right now - an Agones warm pool with nothing
+        # Ready. Expected, not a fault: everyone goes back to waiting, and
+        # their next poll tries again.
+        claims.release_tickets(claimed_ids)
+        return False
+
     claims.stamp_session(claimed_ids, session_id)
 
     # Measured only once a server is in hand. Now that every poll retries,

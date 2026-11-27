@@ -21,6 +21,11 @@ TICKET_STALE_SECONDS = 10
 # than SessionHeartbeat's 10s interval.
 SESSION_STALE_SECONDS = 45
 
+# Garbage-collection horizon for a session row, refreshed by each heartbeat.
+# Normally irrelevant for Fargate: ecs_events deletes the row as soon as the
+# task stops. For Agones it's what eventually removes rows nothing else does.
+SESSION_EXPIRY_SECONDS = SESSION_STALE_SECONDS * 4
+
 # A hard ceiling on how much this endpoint can ever cost. Unlike the shared
 # secret, this holds even against someone who extracted the key from a game
 # build - they can spam requests, but they cannot make us run more than this
@@ -28,6 +33,11 @@ SESSION_STALE_SECONDS = 45
 MAX_CONCURRENT_SESSIONS = int(os.environ.get("MAX_CONCURRENT_SESSIONS", "4"))
 
 METRICS_NAMESPACE = os.environ.get("METRICS_NAMESPACE", "GroundTrace/Matchmaker")
+
+# Which backend launches game servers: fargate or agones. See mm/backends.
+# Defaults to fargate so ecs_events, which is never given it, labels its
+# metrics correctly - it only ever hears about ECS tasks.
+ORCHESTRATOR = os.environ.get("ORCHESTRATOR", "fargate")
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
