@@ -70,6 +70,8 @@ resource "aws_cloudwatch_dashboard" "matchmaker" {
             [local.matchmaker_namespace, "ProvisionDurationSeconds", { stat = "Average", label = "avg" }],
             ["...", { stat = "Maximum", label = "max" }],
             ["...", { stat = "p90", label = "p90" }],
+            # The Agones equivalent: one allocator round trip, not a boot.
+            [local.matchmaker_namespace, "AllocationDurationSeconds", { stat = "Average", label = "agones allocation avg" }],
           ]
         }
       },
@@ -134,6 +136,8 @@ resource "aws_cloudwatch_dashboard" "matchmaker" {
             [".", "CapacityCapHit"],
             [".", "ClaimContention"],
             [".", "TicketNotYetIndexed"],
+            [".", "WarmPoolExhausted"],
+            [".", "AllocationContention"],
           ]
         }
       },

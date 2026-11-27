@@ -95,6 +95,20 @@ data "aws_iam_policy_document" "matchmaker" {
         actions = ["ec2:DescribeNetworkInterfaces"]
         resources = ["*"]
     }
+
+    # The allocator mTLS material for the Agones backend. Granted whatever
+    # the orchestrator, so switching is a variable change and not an IAM one;
+    # a fargate deploy never calls it. Decryption uses the AWS-managed SSM
+    # key, which allows any principal in the account that can read the
+    # parameter, so no kms:Decrypt grant is needed.
+    statement {
+        sid = "ReadAllocatorTls"
+        effect = "Allow"
+        actions = ["ssm:GetParameter"]
+        resources = [
+            "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.agones_tls_parameter}",
+        ]
+    }
 }
 
 resource "aws_iam_role_policy" "matchmaker" {

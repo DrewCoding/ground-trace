@@ -10,6 +10,15 @@ data "archive_file" "matchmaker" {
     excludes = ["**/__pycache__/**", "**/*.pyc"]
 }
 
+# The allocator's CA, client cert and key, as one SecureString. Deliberately
+# not a Terraform resource: Terraform would store the value - a private key -
+# in state, so it's uploaded out of band by scripts/put-allocator-tls.sh.
+# Parameter Store rather than Secrets Manager because its standard tier is
+# free; a secret costs $0.40 a month whether or not a cluster exists.
+locals {
+    agones_tls_parameter = "/${var.project_name}/agones/allocator-tls"
+}
+
 resource "aws_cloudwatch_log_group" "matchmaker" {
     name = "/aws/lambda/${var.project_name}-matchmaker"
     retention_in_days = 7
@@ -29,7 +38,9 @@ resource "aws_lambda_function" "matchmaker" {
     memory_size = 256
 
     environment {
-        variables = {
+        # The AGONES_* settings only when they're used. mm.backends.agones
+        # reads them at import, and only an agones deploy imports it.
+        variables = merge({
           SESSIONS_TABLE = aws_dynamodb_table.sessions.name
           QUEUE_TABLE = aws_dynamodb_table.queue.name
           ECS_CLUSTER = aws_ecs_cluster.main.name
@@ -37,8 +48,21 @@ resource "aws_lambda_function" "matchmaker" {
           SUBNET_IDS = join(",", module.vpc.public_subnets)
           SECURITY_GROUP_ID = aws_security_group.game_server.id
           CONTAINER_NAME = "game-server"
+          GAME_PORT = tostring(var.game_server_port)
           API_KEY = var.matchmaker_api_key
           MAX_CONCURRENT_SESSIONS = tostring(var.max_concurrent_sessions)
+          ORCHESTRATOR = var.orchestrator
+        }, var.orchestrator == "agones" ? {
+          AGONES_ALLOCATOR_URL = var.agones_allocator_url
+          AGONES_TLS_PARAMETER = local.agones_tls_parameter
+        } : {})
+    }
+
+    lifecycle {
+        # Caught at plan time rather than as a KeyError on every cold start.
+        precondition {
+            condition = var.orchestrator != "agones" || startswith(var.agones_allocator_url, "https://")
+            error_message = "orchestrator = agones needs agones_allocator_url (https://...)."
         }
     }
 }

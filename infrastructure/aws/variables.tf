@@ -68,3 +68,28 @@ variable "max_concurrent_sessions" {
     type = number
     default = 4
 }
+
+variable "orchestrator" {
+    type = string
+    default = "fargate"
+    description = <<-EOT
+      Which backend the matchmaker gets game servers from: fargate or agones.
+      agones also needs agones_allocator_url, and the allocator certificates
+      uploaded with scripts/put-allocator-tls.sh.
+    EOT
+
+    validation {
+        condition = contains(["fargate", "agones"], var.orchestrator)
+        error_message = "orchestrator must be fargate or agones."
+    }
+}
+
+variable "agones_allocator_url" {
+    type = string
+    default = ""
+    description = <<-EOT
+      The allocator's https:// address on the cluster. A new load balancer
+      means a new address, so it's set per deploy rather than hardcoded.
+      Only read when orchestrator is agones.
+    EOT
+}
