@@ -29,3 +29,4 @@ def emit_metric(name, value, unit = "Count", **properties):
     }
     payload.update(properties)
     print(json.dumps(payload, default = decimal_default))
+

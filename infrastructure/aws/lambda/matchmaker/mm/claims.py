@@ -39,3 +39,4 @@ def release_tickets(ticket_ids):
             ExpressionAttributeNames = {"#s": "status"},
             ExpressionAttributeValues = {":waiting": "waiting"},
         )
+        
