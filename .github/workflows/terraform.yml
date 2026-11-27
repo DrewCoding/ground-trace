@@ -99,6 +99,6 @@ jobs:
       # cannot change it.
       - name: Terraform apply
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        run: terraform apply -input=false -auto-approve tfplan -lock-timeout=10m 
+        run: terraform apply -input=false -auto-approve -lock-timeout=10m tfplan
         env:
           TF_VAR_matchmaker_api_key: ${{ secrets.MATCHMAKER_API_KEY }}
