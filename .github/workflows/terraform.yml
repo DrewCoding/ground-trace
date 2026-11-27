@@ -20,6 +20,10 @@ env:
   AWS_REGION: us-west-1
   TF_WORKING_DIR: infrastructure/aws
 
+concurrency:
+  group: terraform
+  cancel-in-progress: false
+
 jobs:
   tests:
     uses: ./.github/workflows/matchmaker-tests.yml
