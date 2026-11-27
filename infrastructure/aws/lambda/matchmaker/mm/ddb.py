@@ -8,6 +8,15 @@ _dynamodb = boto3.resource("dynamodb")
 sessions = _dynamodb.Table(config.SESSIONS_TABLE)
 queue = _dynamodb.Table(config.QUEUE_TABLE)
 
+# UpdateItem creates the item when the key doesn't exist. Every update that
+# targets a row someone else may have deleted - a ticket the player cancelled,
+# a session whose server ended - carries one of these, or it would write back
+# a partial row. One with no expiresAt is never garbage collected, and a
+# session one counts against the server cap forever.
+EXISTS_TICKET = "attribute_exists(ticketId)"
+EXISTS_SESSION = "attribute_exists(sessionId)"
+
+
 def condition_failed(exc):
     return (
         isinstance(exc, ClientError)

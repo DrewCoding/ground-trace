@@ -20,8 +20,10 @@ GAME_PORT = int(os.environ.get("GAME_PORT", "7777"))
 ecs = boto3.client("ecs")
 ec2 = boto3.client("ec2")
 
+
 def has_capacity():
     return sessions.active_session_count() < config.MAX_CONCURRENT_SESSIONS
+
 
 def provision():
     session_id = str(uuid.uuid4())
@@ -72,6 +74,7 @@ def provision():
 
     return session_id
 
+
 def resolve_address(session):
     ip = session.get("publicIp") or _lookup_public_ip(session)
     if not ip:
@@ -79,6 +82,7 @@ def resolve_address(session):
     # The row is the authority: provision() recorded the port this server
     # listens on. GAME_PORT is only the fallback for rows written before it did.
     return ip, int(session.get("port", GAME_PORT))
+
 
 def _lookup_public_ip(session):
     """A Fargate task can't discover its own public IP, so we look it up.
@@ -109,11 +113,10 @@ def _lookup_public_ip(session):
     if not ip:
         return None
 
-    ddb.sessions.update_item(
-        Key = {"sessionId": session["sessionId"]},
-        UpdateExpression = "SET publicIp = :ip",
-        ExpressionAttributeValues = {":ip": ip},
-    )
+    # The task may have stopped, and its row been removed, since the poll read
+    # it. Handing out that address would send players to nothing.
+    if not sessions.set_public_ip(session["sessionId"], ip):
+        return None
 
     # The real cold-start number: RunTask to a reachable address. This is
     # the first poll that found an IP, so it overstates slightly by up to

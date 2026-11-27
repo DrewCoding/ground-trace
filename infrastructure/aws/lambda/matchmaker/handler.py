@@ -6,7 +6,8 @@ from botocore.exceptions import ClientError
 
 from mm import config, sessions, tickets
 from mm.dashboard import dashboard_snapshot
-from mm.responses import MatchmakerError, respond
+from mm.responses import MatchmakerError, NotFoundError, respond
+
 
 def lambda_handler(event, context):
     method = event["requestContext"]["http"]["method"]
@@ -55,6 +56,9 @@ def lambda_handler(event, context):
 
     except KeyError as exc:
         return respond(400, {"error": f"missing {exc}"})
+
+    except NotFoundError as exc:
+        return respond(404, {"error": str(exc)})
 
     except MatchmakerError as exc:
         config.log.error("matchmaker: %s", exc)
