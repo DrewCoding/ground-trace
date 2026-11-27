@@ -1,11 +1,7 @@
 name: Matchmaker tests
 
 on:
-  pull_request:
-    paths: ["infrastructure/aws/lambda/**"]
-  push:
-    branches: [main]
-    paths: ["infrastructure/aws/lambda/**"]
+  workflow_call:
   workflow_dispatch:
 
 # Tests run against moto, not AWS, so no credentials and no id-token: that

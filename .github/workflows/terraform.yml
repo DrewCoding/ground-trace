@@ -21,7 +21,11 @@ env:
   TF_WORKING_DIR: infrastructure/aws
 
 jobs:
+  tests:
+    uses: ./.github/workflows/matchmaker-tests.yml
+
   terraform:
+    needs: tests
     runs-on: ubuntu-latest
     defaults:
       run:
