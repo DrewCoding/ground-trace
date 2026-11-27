@@ -1,6 +1,7 @@
 import time
 from mm import config, ddb
 
+
 def dashboard_snapshot():
     """Everything the status page renders, in one request.
 

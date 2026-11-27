@@ -1,7 +1,9 @@
 import json
 import time
+
 from mm import config
 from mm.responses import decimal_default
+
 
 def emit_metric(name, value, unit = "Count", **properties):
     """Publish a metric via CloudWatch Embedded Metric Format.
@@ -29,4 +31,3 @@ def emit_metric(name, value, unit = "Count", **properties):
     }
     payload.update(properties)
     print(json.dumps(payload, default = decimal_default))
-
