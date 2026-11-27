@@ -2,14 +2,14 @@ name: Terraform
 
 on:
   pull_request:
-    paths: 
-      - "infrastructure/**"
+    paths:
+      - "infrastructure/aws/**"
       - ".github/workflows/terraform.yml"
       - ".github/workflows/matchmaker-tests.yml"
   push:
     branches: [main]
-    paths: 
-      - "infrastructure/**"
+    paths:
+      - "infrastructure/aws/**"
       - ".github/workflows/terraform.yml"
       - ".github/workflows/matchmaker-tests.yml"
   workflow_dispatch:
