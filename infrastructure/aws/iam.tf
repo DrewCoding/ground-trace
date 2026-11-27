@@ -102,3 +102,30 @@ resource "aws_iam_role_policy" "matchmaker" {
     role = aws_iam_role.matchmaker.id
     policy = data.aws_iam_policy_document.matchmaker.json
 }
+
+# The ECS task-state listener. Separate from the matchmaker role so a function
+# that only ever deletes session rows can't launch tasks or read the queue.
+resource "aws_iam_role" "ecs_events" {
+    name = "${var.project_name}-ecs-events"
+    assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_events_logs" {
+    role = aws_iam_role.ecs_events.name
+    policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+data "aws_iam_policy_document" "ecs_events" {
+    statement {
+        sid = "EndSessions"
+        effect = "Allow"
+        actions = ["dynamodb:DeleteItem"]
+        resources = [aws_dynamodb_table.sessions.arn]
+    }
+}
+
+resource "aws_iam_role_policy" "ecs_events" {
+    name = "${var.project_name}-ecs-events"
+    role = aws_iam_role.ecs_events.id
+    policy = data.aws_iam_policy_document.ecs_events.json
+}
