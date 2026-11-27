@@ -3,7 +3,6 @@ import os
 
 SESSIONS_TABLE = os.environ["SESSIONS_TABLE"]
 QUEUE_TABLE = os.environ["QUEUE_TABLE"]
-API_KEY = os.environ["API_KEY"]
 PLAYERS_PER_MATCH = 2
 
 # A ticket nobody has polled for this long is garbage. TTL deletes it

@@ -1,5 +1,6 @@
 import hmac
 import json
+import os
 import traceback
 
 from botocore.exceptions import ClientError
@@ -8,6 +9,7 @@ from mm import config, sessions, tickets
 from mm.dashboard import dashboard_snapshot
 from mm.responses import MatchmakerError, NotFoundError, respond
 
+API_KEY = os.environ["API_KEY"]
 
 def lambda_handler(event, context):
     method = event["requestContext"]["http"]["method"]
