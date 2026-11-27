@@ -2,10 +2,16 @@ name: Terraform
 
 on:
   pull_request:
-    paths: ["infrastructure/**"]
+    paths: 
+      - "infrastructure/**"
+      - ".github/workflows/terraform.yml"
+      - ".github/workflows/matchmaker-tests.yml"
   push:
     branches: [main]
-    paths: ["infrastructure/**"]
+    paths: 
+      - "infrastructure/**"
+      - ".github/workflows/terraform.yml"
+      - ".github/workflows/matchmaker-tests.yml"
   workflow_dispatch:
 
 # id-token: write is what lets the job request an OIDC token. Without it the
@@ -21,7 +27,7 @@ env:
   TF_WORKING_DIR: infrastructure/aws
 
 concurrency:
-  group: terraform
+  group: terraform-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -62,7 +68,7 @@ jobs:
 
       - name: Terraform plan
         id: plan
-        run: terraform plan -input=false -no-color -out=tfplan
+        run: terraform plan -input=false -no-color -out=tfplan -lock-timeout=10m 
         env:
           TF_VAR_matchmaker_api_key: ${{ secrets.MATCHMAKER_API_KEY }}
 
@@ -93,6 +99,6 @@ jobs:
       # cannot change it.
       - name: Terraform apply
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        run: terraform apply -input=false -auto-approve tfplan
+        run: terraform apply -input=false -auto-approve tfplan -lock-timeout=10m 
         env:
           TF_VAR_matchmaker_api_key: ${{ secrets.MATCHMAKER_API_KEY }}
