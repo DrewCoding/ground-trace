@@ -101,3 +101,21 @@ def set_public_ip(session_id, ip):
         if ddb.condition_failed(exc):
             return False
         raise
+
+def end_session(session_id):
+    """Delete a session's row. Returns the row, or None if it was already gone.
+
+    Only one caller can get the row back, which makes this the deduplication
+    point for anything that must happen exactly once per session.
+    """
+    try:
+        return ddb.sessions.delete_item(
+            Key = {"sessionId": session_id},
+            ConditionExpression = ddb.EXISTS_SESSION,
+            ReturnValues = "ALL_OLD",
+        ).get("Attributes")
+    except ClientError as exc:
+        if ddb.condition_failed(exc):
+            return None
+        raise
+    
