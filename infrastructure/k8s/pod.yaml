@@ -12,3 +12,8 @@ spec:
     ports:
     - containerPort: 7777
       protocol: UDP
+    # I made security Unconfined due to AppArmor blocking signals from its own thread
+    # Since it's local-only, EKS doesn't use it. All good.
+    securityContext:
+      appArmorProfile:
+        type: Unconfined
